@@ -1,0 +1,1858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Equity Macro Dashboard | Tusk Invest</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/prop-types@15/prop-types.min.js" crossorigin></script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #ffffff;
+      color: #1e293b;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .animate-pulse { animation: pulse 2s ease-in-out infinite; }
+    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 1100px) { .charts-grid { grid-template-columns: 1fr; } }
+    .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+    @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 600px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+    .recharts-cartesian-grid-horizontal line,
+    .recharts-cartesian-grid-vertical line { stroke: #e2e8f0; }
+    .index-tab {
+      padding: 8px 20px; border-radius: 8px; font-size: 14px; font-weight: 500;
+      cursor: pointer; border: 1px solid #e2e8f0; background: transparent;
+      color: #64748b; font-family: 'Inter', sans-serif; transition: all 0.15s ease;
+    }
+    .index-tab:hover { border-color: #94a3b8; color: #334155; }
+    .index-tab.active { background: #0891b2; border-color: #0891b2; color: #ffffff; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useCallback } = React;
+    const {
+      ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid,
+      Tooltip, ResponsiveContainer, ReferenceLine
+    } = Recharts;
+
+    const C = {
+      bg: '#ffffff', card: '#f8fafc', border: '#e2e8f0',
+      text: '#1e293b', textSec: '#475569', textMut: '#64748b',
+      cyan: '#0891b2', amber: '#d97706', purple: '#7c3aed',
+      green: '#16a34a', red: '#dc2626', blue: '#2563eb', grid: '#e2e8f0',
+    };
+
+    const AVAILABLE_INDICES = [
+      { id: 'nifty50', label: 'Nifty 50', shortLabel: 'Nifty 50' },
+      { id: 'sp500', label: 'S&P 500', shortLabel: 'S&P 500' },
+      { id: 'nasdaq', label: 'NASDAQ', shortLabel: 'NASDAQ' },
+      { id: 'nifty-capital-markets', label: 'Nifty Capital Markets', shortLabel: 'Capital Markets' },
+    ];
+
+    // Per-index TAA configuration — labels, thresholds, explainer strings
+    const TAA_INDEX_CONFIGS = {
+      nifty50: {
+        fiiLabel: 'FII Index Futures Net Long %',
+        fiiExplainer: 'Calculated via No. of Contracts, not exposure value. Acts as the ultimate contrarian gauge. >80% indicates crowded froth (bearish), while <20% signals capitulation (bullish).',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield',
+        breadthUniverse: 'Nifty 500',
+        breadthExplainer: 'Tracks actual market participation. A rising index with falling breadth warns of a fragile, narrow rally.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110,
+        fiiCrowdedThreshold: 80,
+        fiiCapitulationThreshold: 20,
+      },
+      sp500: {
+        fiiLabel: 'CFTC COT Net Speculator Positioning',
+        fiiExplainer: 'Tracks Hedge Fund/Speculator net positioning via CFTC. Extreme crowded shorts often signal capitulation bottoms, while extreme longs signal froth.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus US 10-Year Treasury Yield.',
+        bondLabel: 'US 10Y Treasury Yield',
+        breadthUniverse: 'S&P 500',
+        breadthExplainer: 'Tracks actual market participation across the S&P 500. A rising index with falling breadth warns of a fragile, narrow rally.',
+        mcapGdpExplainer: 'The Buffett Indicator for the US. Historically, readings >170% signal structural overvaluation given higher US financialization.',
+        mcapGdpHotThreshold: 170,
+        fiiCrowdedThreshold: 80,
+        fiiCapitulationThreshold: 20,
+      },
+      nasdaq: {
+        fiiLabel: 'CFTC COT Net Speculator Positioning',
+        fiiExplainer: 'Tracks Hedge Fund/Speculator net positioning via CFTC. Extreme crowded shorts often signal capitulation bottoms, while extreme longs signal froth.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus US 10-Year Treasury Yield.',
+        bondLabel: 'US 10Y Treasury Yield',
+        breadthUniverse: 'NASDAQ 100',
+        breadthExplainer: 'Tracks actual market participation across the NASDAQ 100. A rising index with falling breadth warns of a fragile, narrow rally.',
+        mcapGdpExplainer: 'The Buffett Indicator for the US. Historically, readings >170% signal structural overvaluation given higher US financialization.',
+        mcapGdpHotThreshold: 170,
+        fiiCrowdedThreshold: 80,
+        fiiCapitulationThreshold: 20,
+      },
+    };
+
+    const BASE_URL = 'https://deydvhkxfhdzyttptnee.supabase.co/functions/v1/nse-data-proxy?mode=get-data';
+    const STOCKS_BASE = 'https://deydvhkxfhdzyttptnee.supabase.co/functions/v1/nse-data-proxy';
+
+    // Shared period-filter helpers (for 1Y/3Y/5Y/10Y/All/Date custom range)
+    function parseDMY(s) {
+      if (!s) return null;
+      const m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(String(s).trim());
+      if (!m) return null;
+      const dd = +m[1], mm = +m[2], yyyy = +m[3];
+      if (mm < 1 || mm > 12 || dd < 1 || dd > 31 || yyyy < 1900 || yyyy > 2999) return null;
+      const dt = new Date(Date.UTC(yyyy, mm - 1, dd));
+      if (dt.getUTCFullYear() !== yyyy || dt.getUTCMonth() !== mm - 1 || dt.getUTCDate() !== dd) return null;
+      return yyyy + '-' + String(mm).padStart(2, '0') + '-' + String(dd).padStart(2, '0');
+    }
+    function applyPeriodFilter(rows, period, customStartISO) {
+      if (!rows || rows.length === 0) return rows || [];
+      let cut = null;
+      if (period === 'Date') {
+        cut = customStartISO || null;
+      } else {
+        const p = PERIODS.find(x => x.label === period);
+        if (!p || p.months >= 999 || p.months < 0) return rows;
+        const c = new Date();
+        c.setMonth(c.getMonth() - p.months);
+        cut = c.toISOString().split('T')[0];
+      }
+      if (!cut) return rows;
+      const out = rows.filter(d => d.date >= cut);
+      // Graceful fallback: custom date beyond latest / before earliest with zero match → show all rows
+      return (out.length === 0 && period === 'Date') ? rows : out;
+    }
+
+    // Shared chart utilities — global standard for all graphs
+    function niceTicks(mn, mx, n = 5, decimals = 2) {
+      if (!isFinite(mn) || !isFinite(mx) || mn === mx) return [+(+mn).toFixed(decimals)];
+      const step = (mx - mn) / (n - 1);
+      const out = [];
+      for (let i = 0; i < n; i++) out.push(+(mn + step * i).toFixed(decimals));
+      // De-dupe adjacent equal after rounding
+      return out.filter((v, i) => i === 0 || v !== out[i - 1]);
+    }
+    function fmt2(v) { return (v == null || isNaN(v)) ? '' : (+v).toFixed(2); }
+
+    function processRaw(raw) {
+      return raw.map(([date, pe, pb, bondYield, close]) => {
+        const earningsYield = +((1 / pe) * 100).toFixed(2);
+        const eyby = +(bondYield - earningsYield).toFixed(2);
+        return { date, pe, pb, bondYield, earningsYield, eyby, close: close || null };
+      });
+    }
+
+    function calcStats(arr) {
+      const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+      const sd = Math.sqrt(arr.reduce((a, b) => a + (b - mean) ** 2, 0) / arr.length);
+      return {
+        mean: +mean.toFixed(2), sd: +sd.toFixed(2),
+        sd1Upper: +(mean + sd).toFixed(2), sd1Lower: +(mean - sd).toFixed(2),
+        sd2Upper: +(mean + 2 * sd).toFixed(2), sd2Lower: +(mean - 2 * sd).toFixed(2),
+      };
+    }
+
+    function fmtDate(d) {
+      if (!d) return '';
+      const dt = new Date(d);
+      const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return m[dt.getMonth()] + " '" + String(dt.getFullYear()).slice(2);
+    }
+
+    function StatCard({ label, value, suffix, color, subtext }) {
+      return (
+        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: '16px 20px' }}>
+          <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>{label}</div>
+          <div className="mono" style={{ fontSize: 28, fontWeight: 700, color }}>
+            {value}<span style={{ fontSize: 16, fontWeight: 400, marginLeft: 2 }}>{suffix}</span>
+          </div>
+          {subtext && <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{subtext}</div>}
+        </div>
+      );
+    }
+
+    function Tip({ active, payload, label, fields }) {
+      if (!active || !payload?.length) return null;
+      return (
+        <div style={{ background: '#ffffff', border: '1px solid ' + C.border, borderRadius: 8, padding: '12px 16px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)' }}>
+          <div className="mono" style={{ fontSize: 12, color: C.textMut, marginBottom: 8 }}>{label}</div>
+          {fields.map((f, i) => {
+            const e = payload.find(p => p.dataKey === f.key);
+            if (!e) return null;
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: f.color }} />
+                <span style={{ fontSize: 13, color: C.textSec }}>{f.label}:</span>
+                <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                  {typeof e.value === 'number' ? e.value.toFixed(2) : e.value}{f.suffix || ''}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function ZoneLegend({ stats, suffix }) {
+      const items = [
+        { label: '+2\u03C3', value: stats.sd2Upper, color: C.red },
+        { label: '+1\u03C3', value: stats.sd1Upper, color: C.amber },
+        { label: 'Mean', value: stats.mean, color: C.purple },
+        { label: '\u22121\u03C3', value: stats.sd1Lower, color: C.amber },
+        { label: '\u22122\u03C3', value: stats.sd2Lower, color: C.red },
+      ];
+      return (
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 12 }}>
+          {items.map((it, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+              <div style={{ width: 12, height: 2, background: it.color, borderRadius: 1 }} />
+              <span style={{ color: C.textMut }}>{it.label}</span>
+              <span className="mono" style={{ color: C.textSec }}>{it.value.toFixed(2)}{suffix}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function ChartCard({ title, subtitle, badge, badgeColor, badgeBg, children }) {
+      return (
+        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+            <div>
+              <h2 style={{ fontSize: 18, fontWeight: 600, color: C.text, margin: 0 }}>{title}</h2>
+              {subtitle && <p style={{ fontSize: 13, color: C.textMut, margin: '4px 0 0' }}>{subtitle}</p>}
+            </div>
+            {badge != null && (
+              <div className="mono" style={{ padding: '4px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, background: badgeBg, color: badgeColor }}>
+                {badge}
+              </div>
+            )}
+          </div>
+          {children}
+        </div>
+      );
+    }
+
+    // === RSI Computation ===
+    function getWeeklyCloses(data) {
+      // Group by ISO week, take the last trading day of each week
+      const weeks = {};
+      data.forEach(d => {
+        if (d.close == null) return;
+        const dt = new Date(d.date);
+        const yr = dt.getFullYear();
+        const jan1 = new Date(yr, 0, 1);
+        const wk = Math.ceil(((dt - jan1) / 86400000 + jan1.getDay() + 1) / 7);
+        const key = yr + '-W' + String(wk).padStart(2, '0');
+        if (!weeks[key] || d.date > weeks[key].date) weeks[key] = d;
+      });
+      return Object.values(weeks).sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    function getMonthlyCloses(data) {
+      const months = {};
+      data.forEach(d => {
+        if (d.close == null) return;
+        const key = d.date.slice(0, 7);
+        if (!months[key] || d.date > months[key].date) months[key] = d;
+      });
+      return Object.values(months).sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    function computeRSI(closes, period) {
+      if (closes.length < period + 1) return [];
+      const results = [];
+      let avgGain = 0, avgLoss = 0;
+      // Initial averages
+      for (let i = 1; i <= period; i++) {
+        const diff = closes[i].close - closes[i - 1].close;
+        if (diff > 0) avgGain += diff; else avgLoss += Math.abs(diff);
+      }
+      avgGain /= period;
+      avgLoss /= period;
+      const rs0 = avgLoss === 0 ? 100 : avgGain / avgLoss;
+      const rsi0 = avgLoss === 0 ? 100 : +(100 - 100 / (1 + rs0)).toFixed(2);
+      results.push({ date: closes[period].date, rsi: rsi0 });
+      // Wilder smoothing
+      for (let i = period + 1; i < closes.length; i++) {
+        const diff = closes[i].close - closes[i - 1].close;
+        const gain = diff > 0 ? diff : 0;
+        const loss = diff < 0 ? Math.abs(diff) : 0;
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+        const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        const rsi = avgLoss === 0 ? 100 : +(100 - 100 / (1 + rs)).toFixed(2);
+        results.push({ date: closes[i].date, rsi });
+      }
+      return results;
+    }
+
+    const RSI_MODES = [
+      { label: 'Daily', key: 'daily' },
+      { label: 'Weekly', key: 'weekly' },
+      { label: 'Monthly', key: 'monthly' },
+    ];
+
+    function RSIModule({ data, activeIndex, period, customStartISO }) {
+      const [rsiMode, setRsiMode] = useState('daily');
+
+      // Compute RSI from ALL data (full history for accurate warmup), then filter display to period
+      const allRsiData = useMemo(() => {
+        const withClose = data.filter(d => d.close != null);
+        if (withClose.length < 15) return [];
+        let series;
+        if (rsiMode === 'weekly') series = getWeeklyCloses(withClose);
+        else if (rsiMode === 'monthly') series = getMonthlyCloses(withClose);
+        else series = withClose;
+        return computeRSI(series, 14);
+      }, [data, rsiMode]);
+
+      // Filter RSI to selected time period
+      const rsiData = useMemo(() => {
+        if (allRsiData.length === 0) return [];
+        return applyPeriodFilter(allRsiData, period, customStartISO);
+      }, [allRsiData, period, customStartISO]);
+
+      const currentRSI = rsiData.length > 0 ? rsiData[rsiData.length - 1].rsi : null;
+      const rsiColor = currentRSI == null ? C.textMut : currentRSI >= 70 ? C.red : currentRSI <= 30 ? C.green : C.cyan;
+      const rsiLabel = currentRSI == null ? 'N/A' : currentRSI >= 70 ? 'Overbought' : currentRSI <= 30 ? 'Oversold' : 'Neutral';
+      const rsiDomain = useMemo(() => {
+        if (rsiData.length === 0) return [0, 100];
+        const vals = rsiData.map(d => d.rsi);
+        const mn = Math.min(...vals, 30); const mx = Math.max(...vals, 70);
+        return [Math.max(0, +mn.toFixed(0)), Math.min(100, +mx.toFixed(0))];
+      }, [rsiData]);
+      const rsiTicks = useMemo(() => niceTicks(rsiDomain[0], rsiDomain[1], 5, 0), [rsiDomain]);
+      const rsiTickInterval = Math.max(1, Math.floor(rsiData.length / 8));
+
+      return (
+        <ChartCard
+          title="RSI (14) — Relative Strength Index"
+          subtitle={<span>
+            {RSI_MODES.map(m => (
+              <button key={m.key} onClick={() => setRsiMode(m.key)}
+                style={{ background: rsiMode === m.key ? C.cyan : 'transparent', border: '1px solid ' + (rsiMode === m.key ? C.cyan : C.border), color: rsiMode === m.key ? '#fff' : C.textSec, borderRadius: 5, padding: '2px 8px', fontSize: 11, fontWeight: rsiMode === m.key ? 600 : 400, cursor: 'pointer', fontFamily: 'Inter, sans-serif', marginRight: 2 }}>
+                {m.label}
+              </button>
+            ))}
+          </span>}
+          badge={currentRSI != null ? currentRSI.toFixed(1) : 'N/A'}
+          badgeColor={rsiColor}
+          badgeBg={currentRSI >= 70 ? 'rgba(220,38,38,0.15)' : currentRSI <= 30 ? 'rgba(22,163,74,0.15)' : 'rgba(8,145,178,0.15)'}
+        >
+          {rsiData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={400}>
+              <ComposedChart key={'rsi-'+rsiMode+'-'+period+'-'+activeIndex} data={rsiData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={rsiTickInterval} stroke={C.grid} />
+                <YAxis domain={rsiDomain} ticks={rsiTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} />
+                <ReferenceLine y={70} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: 'Overbought (70)', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                <ReferenceLine y={30} stroke={C.green} strokeWidth={1} strokeDasharray="4 4" label={{ value: 'Oversold (30)', position: 'insideBottomRight', fill: C.green, fontSize: 10 }} />
+                <ReferenceLine y={50} stroke={C.textMut} strokeWidth={1} strokeDasharray="6 4" />
+                <Tooltip content={<Tip fields={[{ key: 'rsi', label: 'RSI', color: C.cyan }]} />} />
+                <Line type="monotone" dataKey="rsi" stroke={C.cyan} strokeWidth={2} dot={false} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ fontSize: 12, color: C.textMut, padding: '8px 0' }}>Insufficient close price history for RSI calculation.</div>
+          )}
+        </ChartCard>
+      );
+    }
+
+    const PERIODS = [
+      { label: '1Y', months: 12 },
+      { label: '3Y', months: 36 },
+      { label: '5Y', months: 60 },
+      { label: '10Y', months: 120 },
+      { label: 'All', months: 999 },
+      { label: 'Date', months: -1 },
+    ];
+
+    // =====================================================================
+    // TACTICAL ASSET ALLOCATION (TAA) — z-scores, overlays, backtest
+    // =====================================================================
+    // Rolling z-score: (x - rolling_mean) / rolling_std, past-only (no lookahead).
+    function rollingZ(values, window) {
+      const out = new Array(values.length).fill(null);
+      const minPeriods = Math.max(20, Math.floor(window / 4));
+      for (let i = 0; i < values.length; i++) {
+        const start = Math.max(0, i - window + 1);
+        let n = 0, s = 0, s2 = 0;
+        for (let j = start; j <= i; j++) {
+          const v = values[j];
+          if (v == null || isNaN(v)) continue;
+          n++; s += v; s2 += v * v;
+        }
+        if (n < minPeriods) continue;
+        const mean = s / n;
+        const variance = Math.max(0, s2 / n - mean * mean);
+        const sd = Math.sqrt(variance);
+        const v = values[i];
+        if (v == null || isNaN(v)) continue;
+        out[i] = sd > 0 ? (v - mean) / sd : 0;
+      }
+      return out;
+    }
+
+    function rollingMeanStd(values, window) {
+      const mean = new Array(values.length).fill(null);
+      const std = new Array(values.length).fill(null);
+      const minPeriods = Math.max(20, Math.floor(window / 4));
+      for (let i = 0; i < values.length; i++) {
+        const start = Math.max(0, i - window + 1);
+        let n = 0, s = 0, s2 = 0;
+        for (let j = start; j <= i; j++) {
+          const v = values[j];
+          if (v == null || isNaN(v)) continue;
+          n++; s += v; s2 += v * v;
+        }
+        if (n < minPeriods) continue;
+        const m = s / n;
+        mean[i] = m;
+        std[i] = Math.sqrt(Math.max(0, s2 / n - m * m));
+      }
+      return { mean, std };
+    }
+
+    function clampN(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    // Map composite z-score to base equity weight in [0, 1].
+    // Linear, slope=0.25 -> z=0 -> 0.5, z=+2 -> 1.0, z=-2 -> 0.0
+    function mapZToWeight(z, slope) {
+      if (z == null || isNaN(z)) return 0.5;
+      return clampN(0.5 + slope * z, 0, 1);
+    }
+
+    // Weighted composite z-score. Weights object maps signal key -> non-negative weight.
+    function calculateCompositeZ(zByKey, weights) {
+      let num = 0, denom = 0;
+      for (const k in weights) {
+        const w = weights[k];
+        const z = zByKey[k];
+        if (w == null || w <= 0) continue;
+        if (z == null || isNaN(z)) continue;
+        num += w * z;
+        denom += w;
+      }
+      return denom > 0 ? num / denom : null;
+    }
+
+    // Backtest: walk forward, rebalance monthly, charge txn cost on turnover.
+    // Returns { navTaa, navBench, cagrTaa, cagrBench, mddTaa, mddBench, series }
+    function runTaaBacktest(data, weightSeries, opts) {
+      const txnBps = (opts && opts.txnBps != null) ? opts.txnBps : 5;
+      const cashAnnual = (opts && opts.cashAnnual != null) ? opts.cashAnnual : 0.065;
+      const cashDaily = cashAnnual / 252;
+      // Build monthly rebalance: take weight at each month's last trading day, apply from next day.
+      const lastByMonth = {};
+      for (let i = 0; i < data.length; i++) {
+        const d = data[i].date; if (!d) continue;
+        const ym = d.slice(0, 7);
+        lastByMonth[ym] = { idx: i, w: weightSeries[i] };
+      }
+      const rebalIdx = new Set(Object.values(lastByMonth).map(o => o.idx));
+      let wEff = 0.5, prevW = 0.5;
+      const nT = data.length;
+      const navT = new Array(nT).fill(1);
+      const navB = new Array(nT).fill(1);
+      let retsT = [], retsB = [];
+      for (let i = 1; i < nT; i++) {
+        const c1 = data[i - 1].close, c2 = data[i].close;
+        const rEq = (c1 && c2) ? (c2 / c1 - 1) : 0;
+        // Rebalance: signal available at close of day i-1 applies to day i return.
+        if (rebalIdx.has(i - 1)) {
+          const w = weightSeries[i - 1];
+          if (w != null && !isNaN(w)) { prevW = wEff; wEff = w; }
+        }
+        const turnover = Math.abs(wEff - prevW);
+        const tc = rebalIdx.has(i - 1) ? turnover * (txnBps / 10000) : 0;
+        prevW = wEff;
+        const rP = wEff * rEq + (1 - wEff) * cashDaily - tc;
+        navT[i] = navT[i - 1] * (1 + rP);
+        navB[i] = navB[i - 1] * (1 + rEq);
+        retsT.push(rP); retsB.push(rEq);
+      }
+      const cagr = (navEnd, n) => n > 1 ? Math.pow(navEnd, 252 / n) - 1 : 0;
+      const mdd = (nav) => { let peak = -Infinity, m = 0; for (const v of nav) { if (v > peak) peak = v; const d = v / peak - 1; if (d < m) m = d; } return m; };
+      return {
+        navTaa: navT, navBench: navB,
+        cagrTaa: cagr(navT[nT - 1], nT), cagrBench: cagr(navB[nT - 1], nT),
+        mddTaa: mdd(navT), mddBench: mdd(navB),
+      };
+    }
+
+    // Derive proxies for fields that aren't yet wired from the backend.
+    // Detect if a signal series is mocked/flat/pending (all identical or all null).
+    function isSignalMocked(arr) {
+      if (!arr || arr.length === 0) return true;
+      const valid = arr.filter(v => v != null);
+      if (valid.length === 0) return true;
+      const first = valid[0];
+      return valid.every(v => v === first);
+    }
+
+    // Overlay for charts with pending data sources
+    function PendingOverlay({ label }) {
+      return (
+        <div style={{ position: 'relative', width: '100%', height: 400 }}>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.85)', borderRadius: 8, zIndex: 2, backdropFilter: 'blur(4px)' }}>
+            <div style={{ width: 48, height: 48, borderRadius: '50%', border: '2px solid rgba(100,116,139,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.03em' }}>{label || 'Awaiting API Integration'}</div>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>Data source pending</div>
+          </div>
+        </div>
+      );
+    }
+
+    // These are deterministic transforms of existing fields so the UI works end-to-end.
+    // When real feeds arrive with fields fii_fut_net_long / breadth / mcap_gdp / fwd_ey,
+    // they will take precedence via the `enrichTaaInputs` function below.
+    // Check if data needs enrichment (Indian format) or is already enriched (US format)
+    function needsEnrichment(data) {
+      if (!data || data.length === 0) return false;
+      const first = data[0];
+      // If data already has erp or fwd_ey (US enriched format), no enrichment needed
+      return first.erp == null && first.fwd_ey == null;
+    }
+
+    function enrichTaaInputs(data) {
+      const closes = data.filter(d => d.close != null);
+      // RSI-14 from existing closes
+      const rsiArr = computeRSI(closes, 14);
+      const rsiByDate = {};
+      rsiArr.forEach(r => { rsiByDate[r.date] = r.rsi; });
+
+      // Simple momentum: 60-day % change on close
+      const momByIdx = new Array(data.length).fill(null);
+      for (let i = 0; i < data.length; i++) {
+        if (i < 60 || !data[i].close || !data[i - 60].close) continue;
+        momByIdx[i] = data[i].close / data[i - 60].close - 1;
+      }
+
+      // Build enriched series
+      const out = data.map((d, i) => {
+        const row = { ...d };
+        row.rsi14 = (d.rsi14 != null) ? d.rsi14 : (rsiByDate[d.date] != null ? rsiByDate[d.date] : null);
+        // FII Index Futures Net Long % — real field preferred, else proxy from momentum (50 +/- up to 30)
+        const mom = momByIdx[i];
+        row.fii_fut_net_long = (d.fii_fut_net_long != null)
+          ? d.fii_fut_net_long
+          : (mom != null ? clampN(50 + 100 * mom, 5, 95) : null);
+        // Market Breadth % > 200 DMA — real field preferred, else proxy from momentum
+        row.breadth = (d.breadth != null)
+          ? d.breadth
+          : (mom != null ? clampN(50 + 150 * mom, 5, 95) : null);
+        // Market Cap / GDP (Buffett) — real field preferred, else proxy from P/E (slow, scaled)
+        row.mcap_gdp = (d.mcap_gdp != null)
+          ? d.mcap_gdp
+          : (d.pe != null ? clampN(60 + 2.0 * d.pe, 40, 180) : null);
+        // 10Y G-Sec yield — if not present, back-compute from eyby and earningsYield if available
+        // We fall back to 7% constant if we can't derive.
+        row.gsec10 = (d.gsec10 != null) ? d.gsec10 : 7.0;
+        // Forward EY (Nifty) — if not present, proxy as 1.10 * trailing EY (forward > trailing in general).
+        const trailingEY = (d.pe != null && d.pe > 0) ? (100 / d.pe) : null;
+        row.fwd_ey = (d.fwd_ey != null) ? d.fwd_ey : (trailingEY != null ? trailingEY * 1.10 : null);
+        // Equity Risk Premium
+        row.erp = (row.fwd_ey != null && row.gsec10 != null) ? (row.fwd_ey - row.gsec10) : null;
+        return row;
+      });
+      return out;
+    }
+
+    // =====================================================================
+    // TAA MODULE — renders gauge, config sliders, backtest card, rationale
+    // =====================================================================
+    // ERP is the sole valuation anchor; prior EYBY/PE/PB weights (30%) rolled into erp.
+    // fii_fut and breadth default to 0 while data sources are pending;
+    // their 30% is reallocated to erp (+20%) and rsi (+10%).
+    const TAA_DEFAULT_WEIGHTS = {
+      rsi: 0.15, fii_fut: 0.00, erp: 0.70, eyby: 0.00, breadth: 0.00, mcap_gdp: 0.15,
+    };
+    const MOCKED_SIGNALS = new Set(['fii_fut', 'breadth']);
+    const TAA_LABELS = {
+      rsi: 'RSI-14', fii_fut: 'FII Index Fut Net Long',
+      erp: 'Equity Risk Premium', eyby: 'EYBY Spread',
+      breadth: 'Breadth (%>200DMA)', mcap_gdp: 'MCap / GDP',
+    };
+
+    function TAAModule({ data, taaConfig }) {
+      const [weights, setWeights] = useState(TAA_DEFAULT_WEIGHTS);
+      const [slope, setSlope] = useState(() => {
+        try { const s = JSON.parse(localStorage.getItem('taa_slope')); return (typeof s === 'number') ? s : 0.25; } catch(e) { return 0.25; }
+      });
+      const [valMode, setValMode] = useState(() => {
+        try { const m = localStorage.getItem('taa_val_mode'); return m === 'eyby' ? 'eyby' : 'erp'; } catch(e) { return 'erp'; }
+      });
+
+      // Restore saved weights from localStorage on mount
+      useEffect(() => {
+        try {
+          const saved = JSON.parse(localStorage.getItem('taa_weights'));
+          if (saved && typeof saved === 'object') {
+            const valid = {};
+            for (const k of Object.keys(TAA_DEFAULT_WEIGHTS)) {
+              valid[k] = (typeof saved[k] === 'number' && saved[k] >= 0 && saved[k] <= 1) ? saved[k] : TAA_DEFAULT_WEIGHTS[k];
+            }
+            setWeights(valid);
+          }
+        } catch(e) {}
+      }, []);
+
+      // Enrich data with derived RSI / proxies for not-yet-wired fields
+      // Skip enrichment if data is already in enriched format (US indices)
+      const rich = useMemo(() => (needsEnrichment(data) ? enrichTaaInputs(data) : data), [data]);
+
+      // Detect which signals are mocked/flat (pending real data)
+      const mockedSignals = useMemo(() => {
+        if (!rich || rich.length < 30) return new Set();
+        const s = new Set();
+        if (isSignalMocked(rich.map(d => d.fii_fut_net_long))) s.add('fii_fut');
+        if (isSignalMocked(rich.map(d => d.breadth))) s.add('breadth');
+        return s;
+      }, [rich]);
+
+      // Build signal arrays (ERP or EYBY as valuation anchor, mutually exclusive)
+      const sig = useMemo(() => {
+        if (!rich || rich.length < 60) return null;
+        const arr = {
+          rsi: rich.map(d => (d.rsi14 != null ? d.rsi14 - 50 : null)),
+          fii_fut: rich.map(d => d.fii_fut_net_long),
+          erp: rich.map(d => d.erp),
+          eyby: rich.map(d => d.eyby != null ? d.eyby : null),
+          breadth: rich.map(d => d.breadth),
+          mcap_gdp: rich.map(d => d.mcap_gdp),
+        };
+        const z_rsi_raw  = rollingZ(arr.rsi, 126);
+        const z_fii_raw  = rollingZ(arr.fii_fut, 756);
+        const z_erp      = rollingZ(arr.erp, 252);
+        // EYBY: positive = bonds favored (bearish for equities), so invert
+        const z_eyby_raw = rollingZ(arr.eyby, 252);
+        const z_eyby     = z_eyby_raw.map(v => v == null ? null : -v);
+        const z_breadth  = rollingZ(arr.breadth, 126);
+        const z_mcap_raw = rollingZ(arr.mcap_gdp, 756);
+        const z_rsi      = z_rsi_raw.map(v => v == null ? null : -v);
+        const z_fii      = z_fii_raw.map(v => v == null ? null : -v);
+        const z_mcap_gdp = z_mcap_raw.map(v => v == null ? null : -v);
+        const { mean: erpMean, std: erpStd } = rollingMeanStd(arr.erp, 252);
+        return {
+          z_rsi, z_fii, z_erp, z_eyby, z_breadth, z_mcap_gdp,
+          fii_raw: arr.fii_fut, mcap_raw: arr.mcap_gdp, erp_raw: arr.erp,
+          erpMean, erpStd,
+        };
+      }, [rich]);
+
+      // Effective weights: zero out inactive valuation signal AND mocked signals
+      const effWeights = useMemo(() => {
+        const ew = { ...weights };
+        if (valMode === 'erp') { ew.eyby = 0; }
+        else { ew.erp = 0; }
+        for (const k of mockedSignals) { ew[k] = 0; }
+        return ew;
+      }, [weights, valMode, mockedSignals]);
+
+      // Composite z and equity weight series
+      const weightSeries = useMemo(() => {
+        if (!sig) return [];
+        const n = rich.length;
+        const out = new Array(n).fill(0.5);
+        for (let i = 0; i < n; i++) {
+          const zby = {
+            rsi: sig.z_rsi[i], fii_fut: sig.z_fii[i], erp: sig.z_erp[i],
+            eyby: sig.z_eyby[i],
+            breadth: sig.z_breadth[i], mcap_gdp: sig.z_mcap_gdp[i],
+          };
+          const cz = calculateCompositeZ(zby, effWeights);
+          let w = mapZToWeight(cz, slope);
+          // Overlays — thresholds from taaConfig
+          const fii = sig.fii_raw[i], mcap = sig.mcap_raw[i];
+          const erp = sig.erp_raw[i], em = sig.erpMean[i], es = sig.erpStd[i];
+          const mcapHot = taaConfig ? taaConfig.mcapGdpHotThreshold : 110;
+          const fiiCrowded = taaConfig ? taaConfig.fiiCrowdedThreshold : 80;
+          const fiiCapit = taaConfig ? taaConfig.fiiCapitulationThreshold : 20;
+          if (fii != null && mcap != null && fii > fiiCrowded && mcap > mcapHot) {
+            w = Math.min(w, 0.30);
+          }
+          if (fii != null && erp != null && em != null && es != null &&
+              fii < fiiCapit && erp > em + es) {
+            w = Math.max(w, 0.90);
+          }
+          out[i] = w;
+        }
+        return out;
+      }, [sig, rich, effWeights, slope]);
+
+      const backtest = useMemo(() => {
+        if (!rich || rich.length < 60) return null;
+        return runTaaBacktest(rich, weightSeries, { txnBps: 5, cashAnnual: 0.065 });
+      }, [rich, weightSeries]);
+
+      const latest = useMemo(() => {
+        if (!sig || !rich.length) return null;
+        const i = rich.length - 1;
+        const zby = {
+          rsi: sig.z_rsi[i], fii_fut: sig.z_fii[i], erp: sig.z_erp[i],
+          eyby: sig.z_eyby[i],
+          breadth: sig.z_breadth[i], mcap_gdp: sig.z_mcap_gdp[i],
+        };
+        const cz = calculateCompositeZ(zby, effWeights);
+        const w = weightSeries[i] != null ? weightSeries[i] : mapZToWeight(cz, slope);
+        return { zby, cz, w, fii: sig.fii_raw[i], mcap: sig.mcap_raw[i], erp: sig.erp_raw[i] };
+      }, [sig, rich, effWeights, slope, weightSeries]);
+
+      const [savedMsg, setSavedMsg] = useState(false);
+
+      const wPct = latest ? Math.round(latest.w * 100) : 50;
+      const gaugeColor = wPct >= 70 ? C.green : wPct <= 30 ? C.red : C.amber;
+
+      // Effective weight total (only active signals)
+      const effTotal = useMemo(() => Object.values(effWeights).reduce((a, b) => a + b, 0), [effWeights]);
+
+      return (
+        <div style={{ marginTop: 24 }}>
+          {/* Unified TAA Control Module */}
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24 }}>
+            <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 20, borderBottom: '1px solid ' + C.border, paddingBottom: 12 }}>TAA Control Module</div>
+
+          {/* Row 1: Gauge + Backtest */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }} className="taa-top-grid">
+            {/* Gauge */}
+            <div style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 10, padding: 20 }}>
+              <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Recommended Equity Allocation</div>
+              <div className="mono" style={{ fontSize: 44, fontWeight: 700, color: gaugeColor, lineHeight: 1 }}>{wPct}%</div>
+              <div style={{ marginTop: 12, background: C.grid, height: 12, borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ width: wPct + '%', height: '100%', background: gaugeColor, transition: 'width 0.3s ease' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.textMut, marginTop: 6 }}>
+                <span>0% (Cash)</span><span>50%</span><span>100% (Equity)</span>
+              </div>
+              {latest && (
+                <div style={{ marginTop: 16, fontSize: 12, color: C.textSec }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                    <div><span style={{ color: C.textMut }}>Composite z: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.cz != null ? latest.cz.toFixed(2) : 'n/a'}</span></div>
+                    <div><span style={{ color: C.textMut }}>FII Long %: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.fii != null ? latest.fii.toFixed(1) : 'n/a'}</span></div>
+                    <div><span style={{ color: C.textMut }}>MCap/GDP: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.mcap != null ? latest.mcap.toFixed(0) + '%' : 'n/a'}</span></div>
+                  </div>
+                  <div style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.5, fontStyle: 'italic' }}>
+                    Explainer: A standardized score aggregating all active signals. &gt;0 indicates a bullish tilt (overweight equities), &lt;0 indicates a bearish tilt (underweight/cash tilt).
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Backtest */}
+            <div style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 10, padding: 20 }}>
+              <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Backtest Results (Monthly Rebalance)</div>
+              {backtest ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: C.textMut }}>Metric</div>
+                    <div style={{ fontSize: 13, marginTop: 8, color: C.textSec }}>CAGR</div>
+                    <div style={{ fontSize: 13, marginTop: 8, color: C.textSec }}>Max Drawdown</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: C.cyan, fontWeight: 600 }}>TAA Portfolio</div>
+                    <div className="mono" style={{ fontSize: 14, marginTop: 8, color: C.text, fontWeight: 600 }}>{(backtest.cagrTaa * 100).toFixed(2)}%</div>
+                    <div className="mono" style={{ fontSize: 14, marginTop: 8, color: C.red, fontWeight: 600 }}>{(backtest.mddTaa * 100).toFixed(1)}%</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>Passive Nifty 50</div>
+                    <div className="mono" style={{ fontSize: 14, marginTop: 8, color: C.text }}>{(backtest.cagrBench * 100).toFixed(2)}%</div>
+                    <div className="mono" style={{ fontSize: 14, marginTop: 8, color: C.red }}>{(backtest.mddBench * 100).toFixed(1)}%</div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: C.textMut }}>Insufficient history.</div>
+              )}
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 16, lineHeight: 1.5 }}>
+                Walk-forward sim: monthly rebalance, 5 bps one-way txn cost, cash sleeve earns 6.5% p.a. Signals lagged 1 day to prevent lookahead. Research tool; not investment advice.
+              </div>
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 8, lineHeight: 1.5, fontStyle: 'italic' }}>
+                Explainer: Simulated historical performance of this exact configuration vs. a passive Nifty 50 strategy, assuming monthly rebalancing and 5bps transaction costs.
+              </div>
+            </div>
+          </div>
+
+          {/* Signal Weight Configuration */}
+          <div style={{ marginTop: 20, borderTop: '1px solid ' + C.border, paddingTop: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Signal Weight Configuration</div>
+                <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>
+                  Tune each signal's contribution to the composite z-score.
+                  <span className="mono" style={{ marginLeft: 8, fontWeight: 600, color: effTotal > 0.999 ? C.green : C.amber }}>
+                    Active Total: {(effTotal * 100).toFixed(0)}%
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button onClick={() => { setWeights(TAA_DEFAULT_WEIGHTS); setValMode('erp'); setSavedMsg(false); }}
+                  style={{ background: 'transparent', border: '1px solid ' + C.border, color: C.textSec, borderRadius: 6, padding: '6px 12px', fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                  Reset defaults
+                </button>
+                <button onClick={() => {
+                    try {
+                      localStorage.setItem('taa_weights', JSON.stringify(weights));
+                      localStorage.setItem('taa_slope', JSON.stringify(slope));
+                      localStorage.setItem('taa_val_mode', valMode);
+                    } catch(e) {}
+                    setSavedMsg(true); setTimeout(() => setSavedMsg(false), 2000);
+                  }}
+                  style={{ background: savedMsg ? C.green : C.cyan, border: 'none', color: '#fff', borderRadius: 6, padding: '6px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', transition: 'background 0.2s' }}>
+                  {savedMsg ? '\u2713 Saved!' : 'Save Configuration'}
+                </button>
+              </div>
+            </div>
+
+            {/* ERP / EYBY Toggle */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, padding: '10px 14px', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8 }}>
+              <span style={{ fontSize: 12, color: C.textMut, fontWeight: 600 }}>Valuation Anchor:</span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: valMode === 'erp' ? C.green : C.textMut, cursor: 'pointer', fontWeight: valMode === 'erp' ? 600 : 400 }}>
+                <input type="radio" name="valMode" value="erp" checked={valMode === 'erp'}
+                  onChange={() => { setValMode('erp'); setSavedMsg(false); }}
+                  style={{ accentColor: C.green }} />
+                Equity Risk Premium
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: valMode === 'eyby' ? C.amber : C.textMut, cursor: 'pointer', fontWeight: valMode === 'eyby' ? 600 : 400 }}>
+                <input type="radio" name="valMode" value="eyby" checked={valMode === 'eyby'}
+                  onChange={() => { setValMode('eyby'); setSavedMsg(false); }}
+                  style={{ accentColor: C.amber }} />
+                EYBY Spread
+              </label>
+            </div>
+
+            {/* Sliders — hide inactive valuation signal */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
+              {Object.keys(TAA_DEFAULT_WEIGHTS).filter(k => {
+                if (k === 'erp' && valMode !== 'erp') return false;
+                if (k === 'eyby' && valMode !== 'eyby') return false;
+                return true;
+              }).map(k => {
+                const isMocked = mockedSignals.has(k);
+                const activeKeys = Object.keys(TAA_DEFAULT_WEIGHTS).filter(kk => {
+                  if (kk === 'erp' && valMode !== 'erp') return false;
+                  if (kk === 'eyby' && valMode !== 'eyby') return false;
+                  return true;
+                });
+                const sumOthers = activeKeys.filter(kk => kk !== k).reduce((a, kk) => a + (mockedSignals.has(kk) ? 0 : weights[kk]), 0);
+                const maxForK = isMocked ? 0 : Math.max(0, +(1.0 - sumOthers).toFixed(2));
+                return (
+                <div key={k} style={{ opacity: isMocked ? 0.45 : 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.textSec, marginBottom: 4 }}>
+                    <span>{TAA_LABELS[k]}{isMocked ? <span style={{ marginLeft: 8, fontSize: 10, color: C.amber, background: 'rgba(245,158,11,0.12)', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>PENDING</span> : null}</span>
+                    <span className="mono" style={{ color: isMocked ? C.textMut : C.text, fontWeight: 600 }}>{isMocked ? '0%' : (weights[k] * 100).toFixed(0) + '%'}</span>
+                  </div>
+                  <input type="range" min="0" max={maxForK} step="0.01" value={isMocked ? 0 : weights[k]}
+                    disabled={isMocked}
+                    onChange={e => {
+                      if (isMocked) return;
+                      const desired = +e.target.value;
+                      const capped = Math.min(desired, maxForK);
+                      setWeights(prev => ({ ...prev, [k]: +capped.toFixed(2) }));
+                      setSavedMsg(false);
+                    }}
+                    style={{ width: '100%', cursor: isMocked ? 'not-allowed' : 'pointer' }} />
+                </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.5, fontStyle: 'italic' }}>
+              Explainer: Dictates the relative importance of each metric in calculating the final Composite Z-Score. Adjusting these directly shifts the Recommended Equity Allocation.
+            </div>
+
+            {/* Map slope */}
+            <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 12, color: C.textSec }}>Map slope (sensitivity):</span>
+              <input type="range" min="0.10" max="0.50" step="0.01" value={slope}
+                onChange={e => setSlope(+e.target.value)}
+                style={{ flex: 1, maxWidth: 240 }} />
+              <span className="mono" style={{ fontSize: 12, color: C.text, fontWeight: 600, minWidth: 42, textAlign: 'right' }}>{slope.toFixed(2)}</span>
+            </div>
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 8, lineHeight: 1.5, fontStyle: 'italic', maxWidth: 600 }}>
+              Explainer: Determines how aggressively the model scales equity weight based on the composite Z-score. A higher slope means faster, more aggressive shifts between 0% and 100% equity exposure.
+            </div>
+          </div>
+          </div>{/* end unified TAA Control Module */}
+        </div>
+      );
+    }
+
+    // =====================================================================
+    // STOCKS DASHBOARD — consolidated multi-stock framework
+    // =====================================================================
+    function processStocksRows(rows) {
+      // rows from edge function: [date, close, pe, pb, eps_ttm, bvps, earnings_yield]
+      return rows.map(r => ({
+        date: r[0],
+        close: (r[1] == null) ? null : +r[1],
+        pe: (r[2] == null) ? null : +r[2],
+        pb: (r[3] == null) ? null : +r[3],
+        eps_ttm: (r[4] == null) ? null : +r[4],
+        bvps: (r[5] == null) ? null : +r[5],
+        earningsYield: (r[6] == null) ? null : +r[6],
+      }));
+    }
+
+    function StocksDashboard({ period, setPeriod, customStart, setCustomStart, customStartISO }) {
+      const [stocksList, setStocksList] = useState([]);
+      const [selectedTicker, setSelectedTicker] = useState('');
+      const [dataCache, setDataCache] = useState({});
+      const [loading, setLoading] = useState(true);
+      const [listLoading, setListLoading] = useState(true);
+
+      // Fetch stocks list on mount
+      useEffect(() => {
+        fetch(STOCKS_BASE + '?mode=stocks-list&t=' + Date.now(), { cache: 'no-store' })
+          .then(r => r.json())
+          .then(list => {
+            if (Array.isArray(list) && list.length > 0) {
+              setStocksList(list);
+              if (!selectedTicker) setSelectedTicker(list[0].ticker);
+            }
+            setListLoading(false);
+          })
+          .catch(() => { setListLoading(false); });
+      }, []);
+
+      // Fetch data for selected ticker
+      useEffect(() => {
+        if (!selectedTicker) return;
+        if (dataCache[selectedTicker]) return; // cached
+        setLoading(true);
+        fetch(STOCKS_BASE + '?mode=stocks-data&ticker=' + encodeURIComponent(selectedTicker) + '&t=' + Date.now(), { cache: 'no-store' })
+          .then(r => r.json())
+          .then(j => {
+            const processed = processStocksRows(j.rows || []);
+            setDataCache(prev => ({ ...prev, [selectedTicker]: processed }));
+            setLoading(false);
+          })
+          .catch(() => { setLoading(false); });
+      }, [selectedTicker]);
+
+      const data = dataCache[selectedTicker] || [];
+      const stockMeta = stocksList.find(s => s.ticker === selectedTicker);
+
+      const filtered = useMemo(() => {
+        if (data.length === 0) return [];
+        return applyPeriodFilter(data, period, customStartISO);
+      }, [data, period, customStartISO]);
+
+      // Only keep rows with valid values per-series
+      const peRows = useMemo(() => filtered.filter(d => d.pe != null && d.pe > 0 && isFinite(d.pe)), [filtered]);
+      const pbRows = useMemo(() => filtered.filter(d => d.pb != null && d.pb > 0 && isFinite(d.pb)), [filtered]);
+      const priceRows = useMemo(() => filtered.filter(d => d.close != null && d.close > 0), [filtered]);
+
+      const emptyStats = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+      const stats = useMemo(() => ({
+        pe: peRows.length > 0 ? calcStats(peRows.map(x => x.pe)) : emptyStats,
+        pb: pbRows.length > 0 ? calcStats(pbRows.map(x => x.pb)) : emptyStats,
+        price: priceRows.length > 0 ? calcStats(priceRows.map(x => x.close)) : emptyStats,
+      }), [peRows, pbRows, priceRows]);
+
+      const latestRow = filtered.length > 0 ? filtered[filtered.length - 1] : null;
+      const latestClose = priceRows.length > 0 ? priceRows[priceRows.length - 1].close : null;
+      const latestPE = peRows.length > 0 ? peRows[peRows.length - 1].pe : null;
+      const latestPB = pbRows.length > 0 ? pbRows[pbRows.length - 1].pb : null;
+      const latestEY = latestPE && latestPE > 0 ? +(100 / latestPE).toFixed(2) : null;
+
+      // Downsample helper for charts
+      function sample(rows) {
+        if (rows.length === 0) return [];
+        const step = Math.max(1, Math.floor(rows.length / 300));
+        const s = rows.filter((_, i) => i % step === 0);
+        if (s.length > 0 && s[s.length - 1] !== rows[rows.length - 1]) s.push(rows[rows.length - 1]);
+        return s;
+      }
+
+      const priceChart = useMemo(() => sample(priceRows).map(d => ({ ...d, priceMean: stats.price.mean })), [priceRows, stats.price.mean]);
+      const peChart = useMemo(() => sample(peRows).map(d => ({ ...d, peMean: stats.pe.mean })), [peRows, stats.pe.mean]);
+      const pbChart = useMemo(() => sample(pbRows).map(d => ({ ...d, pbMean: stats.pb.mean })), [pbRows, stats.pb.mean]);
+
+      const priceDomain = useMemo(() => {
+        const vals = priceChart.map(d => d.close).filter(v => v != null);
+        if (vals.length === 0) return [0, 1];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        return [+mn.toFixed(2), +mx.toFixed(2)];
+      }, [priceChart]);
+      const priceTicks = useMemo(() => niceTicks(priceDomain[0], priceDomain[1], 5, 2), [priceDomain]);
+
+      const peDomain = useMemo(() => {
+        const vals = peChart.map(d => d.pe).filter(v => v != null);
+        if (vals.length === 0) return [0, 1];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        return [+mn.toFixed(2), +mx.toFixed(2)];
+      }, [peChart]);
+      const peTicks = useMemo(() => niceTicks(peDomain[0], peDomain[1], 5, 2), [peDomain]);
+
+      const pbDomain = useMemo(() => {
+        const vals = pbChart.map(d => d.pb).filter(v => v != null);
+        if (vals.length === 0) return [0, 1];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        return [+mn.toFixed(2), +mx.toFixed(2)];
+      }, [pbChart]);
+      const pbTicks = useMemo(() => niceTicks(pbDomain[0], pbDomain[1], 5, 2), [pbDomain]);
+
+      const priceTickInterval = Math.max(1, Math.floor(priceChart.length / 8));
+      const peTickInterval = Math.max(1, Math.floor(peChart.length / 8));
+      const pbTickInterval = Math.max(1, Math.floor(pbChart.length / 8));
+
+      if (listLoading) {
+        return (
+          <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto', textAlign: 'center', paddingTop: 120 }}>
+            <div style={{ fontSize: 18, color: C.textMut }}>Loading stocks universe...</div>
+          </div>
+        );
+      }
+
+      const latestDate = latestRow ? latestRow.date : '';
+      const firstAvailable = data.length > 0 ? data[0].date : '';
+
+      return (
+        <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+            <div>
+              <h1 style={{ fontSize: 28, fontWeight: 700, color: C.text, letterSpacing: '-0.02em' }}>Equity Macro Dashboard</h1>
+              <p style={{ fontSize: 14, color: C.textMut, marginTop: 6 }}>
+                Stocks &bull; {stockMeta ? stockMeta.name : '...'} &bull; Data till: {latestDate ? new Date(latestDate).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'}) : '...'}
+              </p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                {PERIODS.filter(p => p.label !== 'Date').map(p => (
+                  <button key={p.label} onClick={() => { setPeriod(p.label); setCustomStart(''); }}
+                    style={{ background: period === p.label ? C.cyan : 'transparent', border: '1px solid ' + (period === p.label ? C.cyan : C.border), color: period === p.label ? '#ffffff' : C.textSec, borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: period === p.label ? 600 : 400, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                    {p.label}
+                  </button>
+                ))}
+                <input
+                  type="date"
+                  value={customStartISO || ''}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v) {
+                      const [y, m, d] = v.split('-');
+                      setCustomStart(d + '-' + m + '-' + y);
+                      setPeriod('Date');
+                    } else {
+                      setCustomStart('');
+                      setPeriod('All');
+                    }
+                  }}
+                  title="Pick a custom start date"
+                  style={{ marginLeft: 2, background: period === 'Date' ? C.cyan : 'transparent', border: '1px solid ' + (period === 'Date' ? C.cyan : C.border), color: period === 'Date' ? '#ffffff' : C.textSec, borderRadius: 6, padding: '3px 8px', fontSize: 11, fontFamily: 'Inter, sans-serif', outline: 'none', cursor: 'pointer' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Stock Selector Dropdown */}
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 24, flexWrap: 'wrap' }}>
+            <label style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Select Stock</label>
+            <select
+              value={selectedTicker}
+              onChange={e => setSelectedTicker(e.target.value)}
+              style={{ background: '#ffffff', border: '1px solid ' + C.border, borderRadius: 8, padding: '8px 12px', fontSize: 14, fontFamily: 'Inter, sans-serif', color: C.text, minWidth: 360, cursor: 'pointer', outline: 'none' }}
+            >
+              {stocksList.map(s => (
+                <option key={s.ticker} value={s.ticker}>{s.name} ({s.ticker})</option>
+              ))}
+            </select>
+            {stockMeta && (
+              <span className="mono" style={{ fontSize: 11, color: C.textMut }}>{stockMeta.yahoo_symbol} &bull; {stockMeta.exchange}</span>
+            )}
+          </div>
+
+          {loading && data.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading {selectedTicker}...</div>
+          ) : data.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>
+              No data available for {selectedTicker}. The stock may be unlisted, newly listed, or data unavailable from upstream.
+            </div>
+          ) : (
+          <React.Fragment>
+          {/* KPI Cards */}
+          <div className="kpi-grid" style={{ marginBottom: 32 }}>
+            <StatCard label="Latest Price" value={latestClose != null ? latestClose.toFixed(2) : '—'} suffix="" color={C.cyan} subtext={'Mean: ' + stats.price.mean.toFixed(2)} />
+            <StatCard label="P/E (TTM)" value={latestPE != null ? latestPE.toFixed(2) : '—'} suffix="x" color={C.blue} subtext={peRows.length > 0 ? ('Mean: ' + stats.pe.mean.toFixed(2) + 'x') : 'No fundamentals'} />
+            <StatCard label="P/B" value={latestPB != null ? latestPB.toFixed(2) : '—'} suffix="x" color={C.purple} subtext={pbRows.length > 0 ? ('Mean: ' + stats.pb.mean.toFixed(2) + 'x') : 'No fundamentals'} />
+            <StatCard label="Earnings Yield" value={latestEY != null ? latestEY.toFixed(2) : '—'} suffix="%" color={C.green} subtext="Inverse of P/E" />
+            <StatCard label="Trading Days" value={data.length.toLocaleString()} suffix="" color={C.amber} subtext={firstAvailable ? ('Since ' + new Date(firstAvailable).toLocaleDateString('en-IN', {month:'short', year:'numeric'})) : ''} />
+          </div>
+
+          {/* Price Chart */}
+          <div style={{ marginBottom: 24 }}>
+            <ChartCard
+              title="Price (INR) — Historical Close"
+              subtitle="Daily close price from Yahoo Finance"
+              badge={latestClose != null ? latestClose.toFixed(2) : null}
+              badgeColor={C.cyan}
+              badgeBg={'rgba(8,145,178,0.15)'}
+            >
+              <ResponsiveContainer width="100%" height={380}>
+                <ComposedChart key={'stock-price-'+selectedTicker+'-'+period} data={priceChart} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                  <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={priceTickInterval} stroke={C.grid} />
+                  <YAxis domain={priceDomain} ticks={priceTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(2)} />
+                  <Tooltip content={<Tip fields={[
+                    { key: 'close', label: 'Close', color: C.cyan },
+                    { key: 'priceMean', label: 'Mean', color: C.purple },
+                  ]} />} />
+                  <ReferenceLine y={stats.price.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(stats.price.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                  <ReferenceLine y={stats.price.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(stats.price.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={stats.price.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(stats.price.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                  <ReferenceLine y={stats.price.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(stats.price.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={stats.price.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(stats.price.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                  <Line type="monotone" dataKey="close" stroke={C.cyan} strokeWidth={2} dot={false} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <ZoneLegend stats={stats.price} suffix="" />
+            </ChartCard>
+          </div>
+
+          {/* P/E and P/B charts side-by-side */}
+          <div className="charts-grid" style={{ marginBottom: 24 }}>
+            <ChartCard
+              title="P/E Ratio (TTM)"
+              subtitle={peRows.length > 0 ? 'Trailing 12-month diluted EPS basis' : 'No TTM EPS data available from upstream'}
+              badge={latestPE != null ? latestPE.toFixed(2) + 'x' : null}
+              badgeColor={C.blue}
+              badgeBg={'rgba(37,99,235,0.15)'}
+            >
+              {peRows.length > 0 ? (
+                <ResponsiveContainer width="100%" height={380}>
+                  <ComposedChart key={'stock-pe-'+selectedTicker+'-'+period} data={peChart} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                    <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={peTickInterval} stroke={C.grid} />
+                    <YAxis domain={peDomain} ticks={peTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(2) + 'x'} />
+                    <Tooltip content={<Tip fields={[
+                      { key: 'pe', label: 'P/E', color: C.blue, suffix: 'x' },
+                      { key: 'peMean', label: 'Mean', color: C.purple, suffix: 'x' },
+                    ]} />} />
+                    <ReferenceLine y={stats.pe.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(stats.pe.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={stats.pe.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(stats.pe.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={stats.pe.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(stats.pe.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={stats.pe.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(stats.pe.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={stats.pe.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(stats.pe.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <Line type="monotone" dataKey="pe" stroke={C.blue} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textMut, fontSize: 13 }}>
+                  No P/E data available for this stock.
+                </div>
+              )}
+              {peRows.length > 0 && <ZoneLegend stats={stats.pe} suffix="x" />}
+            </ChartCard>
+
+            <ChartCard
+              title="P/B Ratio"
+              subtitle={pbRows.length > 0 ? 'Price divided by book value per share' : 'No BVPS data available from upstream'}
+              badge={latestPB != null ? latestPB.toFixed(2) + 'x' : null}
+              badgeColor={C.purple}
+              badgeBg={'rgba(124,58,237,0.15)'}
+            >
+              {pbRows.length > 0 ? (
+                <ResponsiveContainer width="100%" height={380}>
+                  <ComposedChart key={'stock-pb-'+selectedTicker+'-'+period} data={pbChart} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                    <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={pbTickInterval} stroke={C.grid} />
+                    <YAxis domain={pbDomain} ticks={pbTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(2) + 'x'} />
+                    <Tooltip content={<Tip fields={[
+                      { key: 'pb', label: 'P/B', color: C.purple, suffix: 'x' },
+                      { key: 'pbMean', label: 'Mean', color: C.purple, suffix: 'x' },
+                    ]} />} />
+                    <ReferenceLine y={stats.pb.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(stats.pb.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={stats.pb.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(stats.pb.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={stats.pb.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(stats.pb.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={stats.pb.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(stats.pb.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={stats.pb.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(stats.pb.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <Line type="monotone" dataKey="pb" stroke={C.purple} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textMut, fontSize: 13 }}>
+                  No P/B data available for this stock.
+                </div>
+              )}
+              {pbRows.length > 0 && <ZoneLegend stats={stats.pb} suffix="x" />}
+            </ChartCard>
+          </div>
+          </React.Fragment>
+          )}
+
+          {/* Footer */}
+          <div style={{ textAlign: 'center', padding: '24px 0', fontSize: 12, color: C.textMut, borderTop: '1px solid ' + C.border, marginTop: 32 }}>
+            Stock prices sourced from Yahoo Finance &bull; Fundamentals (TTM EPS, BVPS) from Yahoo fundamentals time-series &bull; Baseline start date: Apr 2016 (or listing date if later) &bull; Refresh: daily via Supabase pg_cron
+            <br /><span style={{ opacity: 0.7 }}>Tusk Invest Research</span>
+          </div>
+        </div>
+      );
+    }
+
+    function Dashboard() {
+      const [section, setSection] = useState('indices');
+      const [activeIndex, setActiveIndex] = useState('nifty50');
+      const [dataCache, setDataCache] = useState({});
+      const [loading, setLoading] = useState(true);
+      const [lastUpdated, setLastUpdated] = useState('');
+      const [countdown, setCountdown] = useState(300);
+      const [period, setPeriod] = useState('All');
+      const [customStart, setCustomStart] = useState('');
+      const customStartISO = useMemo(() => parseDMY(customStart), [customStart]);
+
+      const indexConfig = AVAILABLE_INDICES.find(x => x.id === activeIndex) || AVAILABLE_INDICES[0];
+      const taaConfig = TAA_INDEX_CONFIGS[activeIndex] || null;
+
+      const fetchData = useCallback(async (idx) => {
+        const indexToFetch = idx || activeIndex;
+        setLoading(true);
+        try {
+          const resp = await fetch(BASE_URL + '&index=' + indexToFetch + '&t=' + Date.now(), { cache: 'no-store' });
+          const raw = await resp.json();
+          if (Array.isArray(raw) && raw.length > 0) {
+            let processed;
+            // Detect format: compact arrays (Indian) vs enriched objects (US)
+            if (Array.isArray(raw[0])) {
+              // Indian format: compact arrays [date, pe, pb, bondYield, close]
+              processed = processRaw(raw);
+            } else if (typeof raw[0] === 'object') {
+              // US format: enriched objects with all fields from server
+              processed = raw;
+            } else {
+              processed = raw;
+            }
+            setDataCache(prev => ({ ...prev, [indexToFetch]: processed }));
+            if (indexToFetch === activeIndex) {
+              const lastDate = (typeof raw[raw.length - 1] === 'object' && raw[raw.length - 1].date)
+                ? raw[raw.length - 1].date
+                : (Array.isArray(raw[raw.length - 1]) ? raw[raw.length - 1][0] : '');
+              setLastUpdated(lastDate);
+            }
+          }
+        } catch (e) { console.error('Data fetch error:', e); }
+        setLoading(false);
+      }, [activeIndex]);
+
+      useEffect(() => { fetchData(activeIndex); }, [activeIndex]);
+
+      // Pre-fetch Nifty 50 data for ratio charts when viewing Capital Markets
+      useEffect(() => {
+        if (activeIndex === 'nifty-capital-markets') {
+          fetch(BASE_URL + '&index=nifty50&t=' + Date.now(), { cache: 'no-store' })
+            .then(r => r.json())
+            .then(raw => {
+              if (Array.isArray(raw) && raw.length > 0) {
+                let processed;
+                // Detect format: compact arrays (Indian) vs enriched objects (US)
+                if (Array.isArray(raw[0])) {
+                  // Indian format: compact arrays [date, pe, pb, bondYield, close]
+                  processed = processRaw(raw);
+                } else if (typeof raw[0] === 'object') {
+                  // US format: enriched objects
+                  processed = raw;
+                } else {
+                  processed = raw;
+                }
+                setDataCache(prev => prev.nifty50 ? prev : { ...prev, nifty50: processed });
+              }
+            }).catch(() => {});
+        }
+      }, [activeIndex]);
+
+      useEffect(() => {
+        const t = setInterval(() => {
+          setCountdown(prev => {
+            if (prev <= 1) { fetchData(activeIndex); return 300; }
+            return prev - 1;
+          });
+        }, 1000);
+        return () => clearInterval(t);
+      }, [activeIndex]);
+
+      const data = dataCache[activeIndex] || [];
+      const [topChartMode, setTopChartMode] = useState('eyby');
+
+      const filtered = useMemo(() => {
+        if (data.length === 0) return [];
+        return applyPeriodFilter(data, period, customStartISO);
+      }, [data, period, customStartISO]);
+
+      const current = filtered.length > 0 ? filtered[filtered.length - 1] : { date:'', pe:0, pb:0, bondYield:0, earningsYield:0, eyby:0 };
+
+      // ERP chart data (Forward EY - G-Sec) and FII proxy for side-by-side with RSI
+      // Skip enrichment if data is already in enriched format (US indices)
+      const enrichedData = useMemo(() => (taaConfig && data.length > 30) ? (needsEnrichment(data) ? enrichTaaInputs(data) : data) : [], [data, taaConfig]);
+      const enrichedFiltered = useMemo(() => enrichedData.length > 0 ? applyPeriodFilter(enrichedData, period, customStartISO) : [], [enrichedData, period, customStartISO]);
+      const erpChartData = useMemo(() => {
+        if (enrichedFiltered.length === 0) return [];
+        const step = Math.max(1, Math.floor(enrichedFiltered.length / 300));
+        const s = enrichedFiltered.filter((_,i) => i % step === 0);
+        if (s.length > 0 && s[s.length-1] !== enrichedFiltered[enrichedFiltered.length-1]) s.push(enrichedFiltered[enrichedFiltered.length-1]);
+        return s.map(d => ({ date: d.date, erp: d.erp, fii: d.fii_fut_net_long }));
+      }, [enrichedFiltered]);
+      const erpStats = useMemo(() => {
+        const vals = erpChartData.filter(d => d.erp != null).map(d => d.erp);
+        return vals.length > 5 ? calcStats(vals) : emptyStats;
+      }, [erpChartData]);
+      const erpDomain = useMemo(() => {
+        const vals = erpChartData.map(d => d.erp).filter(v => v != null);
+        if (vals.length === 0) return [-2, 4];
+        return [+Math.min(...vals).toFixed(2), +Math.max(...vals).toFixed(2)];
+      }, [erpChartData]);
+      const erpTicks = useMemo(() => niceTicks(erpDomain[0], erpDomain[1], 5, 2), [erpDomain]);
+      const fiiStats = useMemo(() => {
+        const vals = erpChartData.filter(d => d.fii != null).map(d => d.fii);
+        return vals.length > 5 ? calcStats(vals) : emptyStats;
+      }, [erpChartData]);
+      const fiiDomain = useMemo(() => {
+        const vals = erpChartData.map(d => d.fii).filter(v => v != null);
+        if (vals.length === 0) return [0, 100];
+        return [+Math.min(...vals).toFixed(1), +Math.max(...vals).toFixed(1)];
+      }, [erpChartData]);
+      const fiiTicks = useMemo(() => niceTicks(fiiDomain[0], fiiDomain[1], 5, 1), [fiiDomain]);
+
+      // Breadth & MCap/GDP chart data (derived from enrichedFiltered, date-filtered)
+      const breadthMcapChartData = useMemo(() => {
+        if (enrichedFiltered.length === 0) return [];
+        const step = Math.max(1, Math.floor(enrichedFiltered.length / 300));
+        const s = enrichedFiltered.filter((_,i) => i % step === 0);
+        if (s.length > 0 && s[s.length-1] !== enrichedFiltered[enrichedFiltered.length-1]) s.push(enrichedFiltered[enrichedFiltered.length-1]);
+        return s.map(d => ({ date: d.date, breadth: d.breadth, mcap: d.mcap_gdp }));
+      }, [enrichedFiltered]);
+      const breadthStats = useMemo(() => {
+        const vals = breadthMcapChartData.filter(d => d.breadth != null).map(d => d.breadth);
+        return vals.length > 5 ? calcStats(vals) : { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+      }, [breadthMcapChartData]);
+      const breadthDomain = useMemo(() => {
+        const vals = breadthMcapChartData.map(d => d.breadth).filter(v => v != null);
+        if (vals.length === 0) return [0, 100];
+        const mn = Math.min(...vals), mx = Math.max(...vals);
+        const pad = (mx - mn) * 0.05 || 5;
+        return [+(mn - pad).toFixed(1), +(mx + pad).toFixed(1)];
+      }, [breadthMcapChartData]);
+      const breadthTicks = useMemo(() => niceTicks(breadthDomain[0], breadthDomain[1], 5, 1), [breadthDomain]);
+      const mcapStats = useMemo(() => {
+        const vals = breadthMcapChartData.filter(d => d.mcap != null).map(d => d.mcap);
+        return vals.length > 5 ? calcStats(vals) : { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+      }, [breadthMcapChartData]);
+      const mcapDomain = useMemo(() => {
+        const vals = breadthMcapChartData.map(d => d.mcap).filter(v => v != null);
+        if (vals.length === 0) return [0, 200];
+        const mn = Math.min(...vals), mx = Math.max(...vals);
+        const pad = (mx - mn) * 0.05 || 5;
+        return [+(mn - pad).toFixed(1), +(mx + pad).toFixed(1)];
+      }, [breadthMcapChartData]);
+      const mcapTicks = useMemo(() => niceTicks(mcapDomain[0], mcapDomain[1], 5, 0), [mcapDomain]);
+      const bmTickInterval = Math.max(1, Math.floor(breadthMcapChartData.length / 8));
+
+      const emptyStats = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+      const filteredStats = useMemo(() => {
+        if (filtered.length === 0) return { pe: emptyStats, pb: emptyStats, eyby: emptyStats, by: emptyStats };
+        return {
+          pe: calcStats(filtered.map(x => x.pe)),
+          pb: calcStats(filtered.map(x => x.pb)),
+          eyby: calcStats(filtered.map(x => x.eyby)),
+          by: calcStats(filtered.map(x => x.bondYield)),
+        };
+      }, [filtered]);
+
+      const sampled = useMemo(() => {
+        if (filtered.length === 0) return [];
+        const step = Math.max(1, Math.floor(filtered.length / 300));
+        const s = filtered.filter((_, i) => i % step === 0);
+        if (s.length > 0 && s[s.length - 1] !== filtered[filtered.length - 1]) s.push(filtered[filtered.length - 1]);
+        return s;
+      }, [filtered]);
+
+      const chartData = useMemo(() => sampled.map(d => ({
+        ...d, peMean: filteredStats.pe.mean, pbMean: filteredStats.pb.mean, eybyMean: filteredStats.eyby.mean,
+      })), [sampled, filteredStats]);
+
+      const eybyDomain = useMemo(() => {
+        const vals = chartData.map(d => d.eyby).filter(v => v != null);
+        if (vals.length === 0) return [0, 1];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        return [+mn.toFixed(2), +mx.toFixed(2)];
+      }, [chartData]);
+      const eybyTicks = useMemo(() => niceTicks(eybyDomain[0], eybyDomain[1], 5, 2), [eybyDomain]);
+
+      const peDomain = useMemo(() => {
+        const vals = chartData.map(d => d.pe).filter(v => v != null);
+        if (vals.length === 0) return [0, 1];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        return [+mn.toFixed(2), +mx.toFixed(2)];
+      }, [chartData]);
+      const peTicks = useMemo(() => niceTicks(peDomain[0], peDomain[1], 5, 2), [peDomain]);
+
+      const pbDomain = useMemo(() => {
+        const vals = chartData.map(d => d.pb).filter(v => v != null);
+        if (vals.length === 0) return [0, 1];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        return [+mn.toFixed(2), +mx.toFixed(2)];
+      }, [chartData]);
+      const pbTicks = useMemo(() => niceTicks(pbDomain[0], pbDomain[1], 5, 2), [pbDomain]);
+
+      const tickInterval = Math.max(1, Math.floor(chartData.length / 8));
+
+      // === Relative Valuation Ratios: Capital Markets / Nifty 50 ===
+      const n50Data = dataCache['nifty50'] || [];
+      const ratioAll = useMemo(() => {
+        if (activeIndex !== 'nifty-capital-markets' || n50Data.length === 0 || data.length === 0) return [];
+        const n50Map = {};
+        n50Data.forEach(d => { n50Map[d.date] = d; });
+        return data
+          .filter(d => n50Map[d.date] && d.pe > 0 && d.pb > 0 && n50Map[d.date].pe > 0 && n50Map[d.date].pb > 0)
+          .map(d => ({ date: d.date, peRatio: +(d.pe / n50Map[d.date].pe).toFixed(4), pbRatio: +(d.pb / n50Map[d.date].pb).toFixed(4) }));
+      }, [activeIndex, data, n50Data]);
+
+      const filteredRatio = useMemo(() => {
+        if (ratioAll.length === 0) return [];
+        return applyPeriodFilter(ratioAll, period, customStartISO);
+      }, [ratioAll, period, customStartISO]);
+
+      const ratioSampled = useMemo(() => {
+        if (filteredRatio.length === 0) return [];
+        const step = Math.max(1, Math.floor(filteredRatio.length / 300));
+        const s = filteredRatio.filter((_, i) => i % step === 0);
+        if (s.length > 0 && s[s.length - 1] !== filteredRatio[filteredRatio.length - 1]) s.push(filteredRatio[filteredRatio.length - 1]);
+        return s;
+      }, [filteredRatio]);
+
+      const ratioStats = useMemo(() => {
+        if (filteredRatio.length === 0) return { pe: emptyStats, pb: emptyStats };
+        return { pe: calcStats(filteredRatio.map(x => x.peRatio)), pb: calcStats(filteredRatio.map(x => x.pbRatio)) };
+      }, [filteredRatio]);
+
+      const ratioChartData = useMemo(() => ratioSampled.map(d => ({
+        ...d, peRatioMean: ratioStats.pe.mean, pbRatioMean: ratioStats.pb.mean,
+      })), [ratioSampled, ratioStats]);
+
+      const peRatioDomain = useMemo(() => {
+        const vals = ratioChartData.map(d => d.peRatio).filter(v => v != null);
+        if (vals.length === 0) return [0, 1];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        return [+mn.toFixed(2), +mx.toFixed(2)];
+      }, [ratioChartData]);
+      const peRatioTicks = useMemo(() => niceTicks(peRatioDomain[0], peRatioDomain[1], 5, 2), [peRatioDomain]);
+
+      const pbRatioDomain = useMemo(() => {
+        const vals = ratioChartData.map(d => d.pbRatio).filter(v => v != null);
+        if (vals.length === 0) return [0, 1];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        return [+mn.toFixed(2), +mx.toFixed(2)];
+      }, [ratioChartData]);
+      const pbRatioTicks = useMemo(() => niceTicks(pbRatioDomain[0], pbRatioDomain[1], 5, 2), [pbRatioDomain]);
+
+      const ratioTickInterval = Math.max(1, Math.floor(ratioChartData.length / 8));
+
+      if (loading && data.length === 0) {
+        return (
+          <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto', textAlign: 'center', paddingTop: 120 }}>
+            <div style={{ fontSize: 18, color: C.textMut }}>Loading dashboard data...</div>
+          </div>
+        );
+      }
+
+      const handleIndexSwitch = (idx) => {
+        setActiveIndex(idx);
+        setCountdown(300);
+        if (!dataCache[idx]) {
+          setLoading(true);
+        } else {
+          const cached = dataCache[idx];
+          if (cached.length > 0) setLastUpdated(cached[cached.length - 1].date);
+        }
+      };
+
+      const dataStartLabel = (activeIndex === 'nifty50') ? 'Apr 2016' : (activeIndex === 'sp500' || activeIndex === 'nasdaq') ? 'Data pending' : 'Oct 2024';
+
+      return (
+        <React.Fragment>
+          {/* Section Tabs (Indices / Stocks) */}
+          <div style={{ maxWidth: 1400, margin: '0 auto', padding: '16px 24px 0' }}>
+            <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid ' + C.border }}>
+              <button onClick={() => setSection('indices')}
+                style={{ background: 'transparent', border: 'none', borderBottom: '2px solid ' + (section === 'indices' ? C.cyan : 'transparent'), color: section === 'indices' ? C.cyan : C.textMut, padding: '12px 24px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', letterSpacing: '0.02em', textTransform: 'uppercase', marginBottom: -1 }}>
+                Indices
+              </button>
+              <button onClick={() => setSection('stocks')}
+                style={{ background: 'transparent', border: 'none', borderBottom: '2px solid ' + (section === 'stocks' ? C.cyan : 'transparent'), color: section === 'stocks' ? C.cyan : C.textMut, padding: '12px 24px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', letterSpacing: '0.02em', textTransform: 'uppercase', marginBottom: -1 }}>
+                Stocks
+              </button>
+            </div>
+          </div>
+          {section === 'stocks' ? (
+            <StocksDashboard period={period} setPeriod={setPeriod} customStart={customStart} setCustomStart={setCustomStart} customStartISO={customStartISO} />
+          ) : (
+        <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+            <div>
+              <h1 style={{ fontSize: 28, fontWeight: 700, color: C.text, letterSpacing: '-0.02em' }}>Equity Macro Dashboard</h1>
+              <p style={{ fontSize: 14, color: C.textMut, marginTop: 6 }}>{indexConfig.label} Valuation Metrics &bull; Data till: {lastUpdated ? new Date(lastUpdated).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'}) : '...'}</p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                {PERIODS.filter(p => p.label !== 'Date').map(p => (
+                  <button key={p.label} onClick={() => { setPeriod(p.label); setCustomStart(''); }}
+                    style={{ background: period === p.label ? C.cyan : 'transparent', border: '1px solid ' + (period === p.label ? C.cyan : C.border), color: period === p.label ? '#ffffff' : C.textSec, borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: period === p.label ? 600 : 400, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                    {p.label}
+                  </button>
+                ))}
+                <input
+                  type="date"
+                  value={customStartISO || ''}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v) {
+                      const [y, m, d] = v.split('-');
+                      setCustomStart(d + '-' + m + '-' + y);
+                      setPeriod('Date');
+                    } else {
+                      setCustomStart('');
+                      setPeriod('All');
+                    }
+                  }}
+                  title="Pick a custom start date"
+                  style={{ marginLeft: 2, background: period === 'Date' ? C.cyan : 'transparent', border: '1px solid ' + (period === 'Date' ? C.cyan : C.border), color: period === 'Date' ? '#ffffff' : C.textSec, borderRadius: 6, padding: '3px 8px', fontSize: 11, fontFamily: 'Inter, sans-serif', outline: 'none', cursor: 'pointer' }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div className="animate-pulse" style={{ width: 8, height: 8, borderRadius: '50%', background: C.green }} />
+                <span className="mono" style={{ fontSize: 12, color: C.textMut }}>
+                  LIVE &bull; refresh in {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, '0')}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Index Selector Tabs */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
+            {AVAILABLE_INDICES.map(idx => (
+              <button key={idx.id}
+                className={'index-tab' + (activeIndex === idx.id ? ' active' : '')}
+                onClick={() => handleIndexSwitch(idx.id)}>
+                {idx.shortLabel}
+              </button>
+            ))}
+          </div>
+
+          {/* KPI Cards */}
+          <div className="kpi-grid" style={{ marginBottom: 32 }}>
+            <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + filteredStats.pe.mean + 'x'} />
+            <StatCard label={indexConfig.shortLabel + " P/B"} value={current.pb} suffix="x" color={C.blue} subtext={'Mean: ' + filteredStats.pb.mean + 'x'} />
+            <StatCard label={taaConfig ? taaConfig.bondLabel : '10Y Bond Yield'} value={current.bondYield} suffix="%" color={C.amber} subtext={'Mean: ' + filteredStats.by.mean + '%'} />
+            <StatCard label="Earnings Yield" value={current.earningsYield} suffix="%" color={C.green} subtext="Inverse of P/E" />
+            <StatCard label="EYBY Spread" value={current.eyby} suffix="%"
+              color={current.eyby > 0 ? C.red : C.green}
+              subtext={current.eyby > 0 ? 'Bonds favored' : 'Equities favored'} />
+          </div>
+
+          {/* EYBY / ERP Toggle Chart */}
+          <div style={{ marginBottom: 24 }}>
+            {taaConfig && (
+              <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+                <button onClick={() => setTopChartMode('eyby')}
+                  style={{ background: topChartMode === 'eyby' ? C.amber : 'transparent', border: '1px solid ' + (topChartMode === 'eyby' ? C.amber : C.border), color: topChartMode === 'eyby' ? '#fff' : C.textSec, borderRadius: 6, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                  EYBY Spread
+                </button>
+                <button onClick={() => setTopChartMode('erp')}
+                  style={{ background: topChartMode === 'erp' ? C.green : 'transparent', border: '1px solid ' + (topChartMode === 'erp' ? C.green : C.border), color: topChartMode === 'erp' ? '#fff' : C.textSec, borderRadius: 6, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                  Equity Risk Premium
+                </button>
+              </div>
+            )}
+            {topChartMode === 'erp' && taaConfig && erpChartData.length > 0 ? (
+              <React.Fragment>
+                <ChartCard
+                  title="Equity Risk Premium (Forward EY &#8722; 10Y G-Sec)"
+                  subtitle="Higher = Equities cheap vs. bonds | Lower = Equities expensive"
+                  badge={erpChartData.length > 0 && erpChartData[erpChartData.length-1].erp != null ? erpChartData[erpChartData.length-1].erp.toFixed(2) + '%' : 'N/A'}
+                  badgeColor={C.green} badgeBg="rgba(34,197,94,0.15)"
+                >
+                  <ResponsiveContainer width="100%" height={380}>
+                    <ComposedChart data={erpChartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                      <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(erpChartData.length / 8))} stroke={C.grid} />
+                      <YAxis domain={erpDomain} ticks={erpTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
+                      <Tooltip content={<Tip fields={[{ key: 'erp', label: 'ERP', color: C.green, suffix: '%' }]} />} />
+                      <ReferenceLine y={0} stroke={C.textMut} strokeWidth={1.5} strokeDasharray="6 4" />
+                      <ReferenceLine y={erpStats.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(erpStats.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                      <ReferenceLine y={erpStats.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(erpStats.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                      <ReferenceLine y={erpStats.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(erpStats.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                      <ReferenceLine y={erpStats.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(erpStats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                      <ReferenceLine y={erpStats.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(erpStats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                      <Line type="monotone" dataKey="erp" stroke={C.green} strokeWidth={2} dot={false} isAnimationActive={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                  <ZoneLegend stats={erpStats} suffix="%" />
+                </ChartCard>
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 8, lineHeight: 1.5, fontStyle: 'italic' }}>
+                  {taaConfig ? taaConfig.erpFootnote : 'Note: ERP calculated as Forward Earnings Yield minus risk-free rate.'}
+                </div>
+              </React.Fragment>
+            ) : (
+            <ChartCard
+              title="EYBY Spread &#8212; Bond Yield minus Earnings Yield"
+              subtitle="Positive = Bonds relatively attractive | Negative = Equities relatively attractive"
+              badge={(current.eyby > 0 ? '+' : '') + current.eyby + '%'}
+              badgeColor={current.eyby > 0 ? C.red : C.green}
+              badgeBg={current.eyby > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)'}
+            >
+              <ResponsiveContainer width="100%" height={380}>
+                <ComposedChart key={'eyby-'+period+'-'+activeIndex} data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                  <defs>
+                    <linearGradient id={'eyGrad-'+period+'-'+activeIndex} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.red} stopOpacity={0.15} />
+                      <stop offset="100%" stopColor={C.red} stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                  <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={tickInterval} stroke={C.grid} />
+                  <YAxis domain={eybyDomain} ticks={eybyTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
+                  <Tooltip content={<Tip fields={[
+                    { key: 'eyby', label: 'EYBY Spread', color: C.amber, suffix: '%' },
+                    { key: 'bondYield', label: taaConfig ? taaConfig.bondLabel : '10Y Bond', color: C.red, suffix: '%' },
+                    { key: 'earningsYield', label: 'Earnings Yield', color: C.green, suffix: '%' },
+                  ]} />} />
+                  <ReferenceLine y={0} stroke={C.textMut} strokeWidth={1.5} strokeDasharray="6 4" />
+                  <ReferenceLine y={filteredStats.eyby.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + filteredStats.eyby.sd2Upper.toFixed(2) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                  <ReferenceLine y={filteredStats.eyby.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + filteredStats.eyby.sd1Upper.toFixed(2) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={filteredStats.eyby.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + filteredStats.eyby.mean.toFixed(2) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                  <ReferenceLine y={filteredStats.eyby.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + filteredStats.eyby.sd1Lower.toFixed(2) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={filteredStats.eyby.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + filteredStats.eyby.sd2Lower.toFixed(2) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                  <Area type="monotone" dataKey="eyby" fill={'url(#eyGrad-'+period+'-'+activeIndex+')'} stroke="none" baseValue={0} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="eyby" stroke={C.amber} strokeWidth={2} dot={false} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <ZoneLegend stats={filteredStats.eyby} suffix="%" />
+            </ChartCard>
+            )}
+          </div>
+
+          {/* P/E and P/B Charts side-by-side */}
+          <div className="charts-grid">
+            <ChartCard
+                title={indexConfig.label + " Price-to-Earnings Ratio"}
+                subtitle={"With 1\u03C3 and 2\u03C3 standard deviation bands"}
+                badge={current.pe + 'x'} badgeColor={C.cyan} badgeBg="rgba(34,211,238,0.15)"
+              >
+                <ResponsiveContainer width="100%" height={400}>
+                  <ComposedChart key={'pe-'+period+'-'+activeIndex} data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                    <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={tickInterval} stroke={C.grid} />
+                    <YAxis domain={peDomain} ticks={peTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + 'x'} />
+                    <Tooltip content={<Tip fields={[
+                      { key: 'pe', label: 'P/E', color: C.cyan, suffix: 'x' },
+                      { key: 'peMean', label: 'Mean', color: C.purple, suffix: 'x' },
+                    ]} />} />
+                    <ReferenceLine y={filteredStats.pe.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(filteredStats.pe.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={filteredStats.pe.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(filteredStats.pe.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={filteredStats.pe.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(filteredStats.pe.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={filteredStats.pe.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(filteredStats.pe.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={filteredStats.pe.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(filteredStats.pe.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <Line type="monotone" dataKey="pe" stroke={C.cyan} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <ZoneLegend stats={filteredStats.pe} suffix="x" />
+              </ChartCard>
+
+            {/* P/B */}
+            <ChartCard
+              title={indexConfig.label + " Price-to-Book Ratio"}
+              subtitle={"With 1\u03C3 and 2\u03C3 standard deviation bands"}
+              badge={current.pb + 'x'} badgeColor={C.blue} badgeBg="rgba(59,130,246,0.15)"
+            >
+              <ResponsiveContainer width="100%" height={400}>
+                <ComposedChart key={'pb-'+period+'-'+activeIndex} data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                  <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={tickInterval} stroke={C.grid} />
+                  <YAxis domain={pbDomain} ticks={pbTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + 'x'} />
+                  <Tooltip content={<Tip fields={[
+                    { key: 'pb', label: 'P/B', color: C.blue, suffix: 'x' },
+                    { key: 'pbMean', label: 'Mean', color: C.purple, suffix: 'x' },
+                  ]} />} />
+                  <ReferenceLine y={filteredStats.pb.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(filteredStats.pb.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                  <ReferenceLine y={filteredStats.pb.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(filteredStats.pb.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={filteredStats.pb.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(filteredStats.pb.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                  <ReferenceLine y={filteredStats.pb.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(filteredStats.pb.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={filteredStats.pb.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(filteredStats.pb.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                  <Line type="monotone" dataKey="pb" stroke={C.blue} strokeWidth={2} dot={false} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <ZoneLegend stats={filteredStats.pb} suffix="x" />
+            </ChartCard>
+          </div>
+
+          {/* RSI + FII side-by-side (Nifty 50: FII chart; others: RSI full-width) */}
+          <div className="charts-grid" style={{ marginTop: 24 }}>
+            <RSIModule data={data} activeIndex={activeIndex} period={period} customStartISO={customStartISO} />
+            {taaConfig && erpChartData.length > 0 && (
+              <ChartCard title={taaConfig.fiiLabel} subtitle={isSignalMocked(erpChartData.map(d => d.fii)) ? "Awaiting live data feed" : "With 1\u03C3 and 2\u03C3 bands"}
+                badge={isSignalMocked(erpChartData.map(d => d.fii)) ? 'PENDING' : (erpChartData.length > 0 && erpChartData[erpChartData.length-1].fii != null ? erpChartData[erpChartData.length-1].fii.toFixed(1) + '%' : 'N/A')}
+                badgeColor={isSignalMocked(erpChartData.map(d => d.fii)) ? C.amber : C.green} badgeBg={isSignalMocked(erpChartData.map(d => d.fii)) ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.15)"}>
+                {isSignalMocked(erpChartData.map(d => d.fii)) ? (
+                  <PendingOverlay label="Awaiting API Integration" />
+                ) : (
+                <ResponsiveContainer width="100%" height={400}>
+                  <ComposedChart data={erpChartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                    <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(erpChartData.length / 8))} stroke={C.grid} />
+                    <YAxis domain={fiiDomain} ticks={fiiTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
+                    <Tooltip content={<Tip fields={[{ key: 'fii', label: taaConfig ? taaConfig.fiiLabel.split(' ').slice(0, 3).join(' ') : 'Positioning', color: C.green, suffix: '%' }]} />} />
+                    <ReferenceLine y={fiiStats.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(fiiStats.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={fiiStats.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(fiiStats.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={fiiStats.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(fiiStats.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={fiiStats.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(fiiStats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={fiiStats.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(fiiStats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <Line type="monotone" dataKey="fii" stroke={C.green} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                )}
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 8, lineHeight: 1.5 }}>{taaConfig.fiiExplainer}</div>
+              </ChartCard>
+            )}
+          </div>
+
+          {/* Breadth + MCap/GDP side-by-side (TAA-enabled indices, Row 2 below RSI/FII) */}
+          {taaConfig && breadthMcapChartData.length > 0 && (
+            <div className="charts-grid" style={{ marginTop: 24 }}>
+              <ChartCard title={'Market Breadth (% of ' + (taaConfig ? taaConfig.breadthUniverse : 'Index') + ' > 200 DMA)'} subtitle={isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? "Awaiting live data feed" : "With 1\u03C3 and 2\u03C3 bands"}
+                badge={isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? 'PENDING' : (breadthMcapChartData.length > 0 && breadthMcapChartData[breadthMcapChartData.length-1].breadth != null ? breadthMcapChartData[breadthMcapChartData.length-1].breadth.toFixed(1) + '%' : 'N/A')}
+                badgeColor={isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? C.amber : C.blue} badgeBg={isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? "rgba(245,158,11,0.15)" : "rgba(59,130,246,0.15)"}>
+                {isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? (
+                  <PendingOverlay label="Awaiting API Integration" />
+                ) : (
+                <ResponsiveContainer width="100%" height={400}>
+                  <ComposedChart data={breadthMcapChartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                    <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={bmTickInterval} stroke={C.grid} />
+                    <YAxis domain={breadthDomain} ticks={breadthTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
+                    <Tooltip content={<Tip fields={[{ key: 'breadth', label: 'Breadth', color: C.blue, suffix: '%' }]} />} />
+                    <ReferenceLine y={breadthStats.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + breadthStats.sd2Upper.toFixed(1) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={breadthStats.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + breadthStats.sd1Upper.toFixed(1) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={breadthStats.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + breadthStats.mean.toFixed(1) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={breadthStats.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + breadthStats.sd1Lower.toFixed(1) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={breadthStats.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + breadthStats.sd2Lower.toFixed(1) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <Line type="monotone" dataKey="breadth" stroke={C.blue} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                )}
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 8, lineHeight: 1.5 }}>{taaConfig ? taaConfig.breadthExplainer : ''}</div>
+              </ChartCard>
+
+              <ChartCard title="Market Cap to GDP (%)" subtitle={"With 1\u03C3 and 2\u03C3 bands"}
+                badge={breadthMcapChartData.length > 0 && breadthMcapChartData[breadthMcapChartData.length-1].mcap != null ? breadthMcapChartData[breadthMcapChartData.length-1].mcap.toFixed(0) + '%' : 'N/A'}
+                badgeColor={C.amber} badgeBg="rgba(245,158,11,0.15)">
+                <ResponsiveContainer width="100%" height={400}>
+                  <ComposedChart data={breadthMcapChartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                    <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={bmTickInterval} stroke={C.grid} />
+                    <YAxis domain={mcapDomain} ticks={mcapTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
+                    <Tooltip content={<Tip fields={[{ key: 'mcap', label: 'MCap/GDP', color: C.amber, suffix: '%' }]} />} />
+                    <ReferenceLine y={mcapStats.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + mcapStats.sd2Upper.toFixed(0) + '%)', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={mcapStats.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + mcapStats.sd1Upper.toFixed(0) + '%)', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={mcapStats.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + mcapStats.mean.toFixed(0) + '%)', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={mcapStats.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + mcapStats.sd1Lower.toFixed(0) + '%)', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={mcapStats.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + mcapStats.sd2Lower.toFixed(0) + '%)', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <Line type="monotone" dataKey="mcap" stroke={C.amber} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 8, lineHeight: 1.5 }}>{taaConfig ? taaConfig.mcapGdpExplainer : ''}</div>
+              </ChartCard>
+            </div>
+          )}
+
+          {/* TAA Module (TAA-enabled indices) */}
+          {taaConfig && <TAAModule data={data} taaConfig={taaConfig} />}
+
+          {/* Relative Valuation Ratio Charts (Capital Markets only) */}
+          {activeIndex === 'nifty-capital-markets' && ratioChartData.length > 0 && (
+            <div className="charts-grid" style={{ marginTop: 24 }}>
+              <ChartCard
+                title="Capital Markets P/E &#247; Nifty 50 P/E"
+                subtitle={"Relative P/E valuation ratio with 1\u03C3 and 2\u03C3 bands"}
+                badge={filteredRatio.length > 0 ? filteredRatio[filteredRatio.length - 1].peRatio.toFixed(2) + 'x' : 'N/A'}
+                badgeColor={C.cyan} badgeBg="rgba(34,211,238,0.15)"
+              >
+                <ResponsiveContainer width="100%" height={400}>
+                  <ComposedChart key={'peRatio-'+period} data={ratioChartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                    <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={ratioTickInterval} stroke={C.grid} />
+                    <YAxis domain={peRatioDomain} ticks={peRatioTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(2) + 'x'} />
+                    <Tooltip content={<Tip fields={[
+                      { key: 'peRatio', label: 'P/E Ratio', color: C.cyan, suffix: 'x' },
+                      { key: 'peRatioMean', label: 'Mean', color: C.purple, suffix: 'x' },
+                    ]} />} />
+                    <ReferenceLine y={ratioStats.pe.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(ratioStats.pe.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={ratioStats.pe.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(ratioStats.pe.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={ratioStats.pe.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(ratioStats.pe.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={ratioStats.pe.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(ratioStats.pe.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={ratioStats.pe.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(ratioStats.pe.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <Line type="monotone" dataKey="peRatio" stroke={C.cyan} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <ZoneLegend stats={ratioStats.pe} suffix="x" />
+              </ChartCard>
+
+              <ChartCard
+                title="Capital Markets P/B &#247; Nifty 50 P/B"
+                subtitle={"Relative P/B valuation ratio with 1\u03C3 and 2\u03C3 bands"}
+                badge={filteredRatio.length > 0 ? filteredRatio[filteredRatio.length - 1].pbRatio.toFixed(2) + 'x' : 'N/A'}
+                badgeColor={C.blue} badgeBg="rgba(59,130,246,0.15)"
+              >
+                <ResponsiveContainer width="100%" height={400}>
+                  <ComposedChart key={'pbRatio-'+period} data={ratioChartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                    <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={ratioTickInterval} stroke={C.grid} />
+                    <YAxis domain={pbRatioDomain} ticks={pbRatioTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(2) + 'x'} />
+                    <Tooltip content={<Tip fields={[
+                      { key: 'pbRatio', label: 'P/B Ratio', color: C.blue, suffix: 'x' },
+                      { key: 'pbRatioMean', label: 'Mean', color: C.purple, suffix: 'x' },
+                    ]} />} />
+                    <ReferenceLine y={ratioStats.pb.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(ratioStats.pb.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={ratioStats.pb.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(ratioStats.pb.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={ratioStats.pb.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(ratioStats.pb.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={ratioStats.pb.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(ratioStats.pb.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={ratioStats.pb.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(ratioStats.pb.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <Line type="monotone" dataKey="pbRatio" stroke={C.blue} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <ZoneLegend stats={ratioStats.pb} suffix="x" />
+              </ChartCard>
+            </div>
+          )}
+
+          {/* Footer */}
+          <div style={{ textAlign: 'center', padding: '24px 0', fontSize: 12, color: C.textMut, borderTop: '1px solid ' + C.border, marginTop: 32 }}>
+            Data sourced from NSE India (PE/PB) &amp; Investing.com (10Y G-Sec Yield) &bull; {indexConfig.label} from {dataStartLabel} &bull; {data.length.toLocaleString()} trading days
+            <br /><span style={{ opacity: 0.7 }}>Tusk Invest Research</span>
+          </div>
+        </div>
+          )}
+        </React.Fragment>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<Dashboard />);
+  </script>
+</body>
+</html>
