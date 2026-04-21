@@ -1343,11 +1343,15 @@
       const emptyStats = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
       const filteredStats = useMemo(() => {
         if (filtered.length === 0) return { pe: emptyStats, pb: emptyStats, eyby: emptyStats, by: emptyStats };
+        const peVals = filtered.map(x => x.pe).filter(v => v != null && isFinite(v));
+        const pbVals = filtered.map(x => x.pb).filter(v => v != null && isFinite(v));
+        const eybyVals = filtered.map(x => x.eyby).filter(v => v != null && isFinite(v));
+        const byVals = filtered.map(x => x.bondYield).filter(v => v != null && isFinite(v));
         return {
-          pe: calcStats(filtered.map(x => x.pe)),
-          pb: calcStats(filtered.map(x => x.pb)),
-          eyby: calcStats(filtered.map(x => x.eyby)),
-          by: calcStats(filtered.map(x => x.bondYield)),
+          pe: peVals.length > 1 ? calcStats(peVals) : emptyStats,
+          pb: pbVals.length > 1 ? calcStats(pbVals) : emptyStats,
+          eyby: eybyVals.length > 1 ? calcStats(eybyVals) : emptyStats,
+          by: byVals.length > 1 ? calcStats(byVals) : emptyStats,
         };
       }, [filtered]);
 
