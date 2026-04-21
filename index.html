@@ -172,8 +172,12 @@
       });
     }
 
+    const EMPTY_STATS = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+
     function calcStats(arr) {
+      if (!arr || arr.length === 0) return { ...EMPTY_STATS };
       const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+      if (!isFinite(mean)) return { ...EMPTY_STATS };
       const sd = Math.sqrt(arr.reduce((a, b) => a + (b - mean) ** 2, 0) / arr.length);
       return {
         mean: +mean.toFixed(2), sd: +sd.toFixed(2),
@@ -935,11 +939,11 @@
       const pbRows = useMemo(() => filtered.filter(d => d.pb != null && d.pb > 0 && isFinite(d.pb)), [filtered]);
       const priceRows = useMemo(() => filtered.filter(d => d.close != null && d.close > 0), [filtered]);
 
-      const emptyStats = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+      const EMPTY_STATS = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
       const stats = useMemo(() => ({
-        pe: peRows.length > 0 ? calcStats(peRows.map(x => x.pe)) : emptyStats,
-        pb: pbRows.length > 0 ? calcStats(pbRows.map(x => x.pb)) : emptyStats,
-        price: priceRows.length > 0 ? calcStats(priceRows.map(x => x.close)) : emptyStats,
+        pe: peRows.length > 0 ? calcStats(peRows.map(x => x.pe)) : EMPTY_STATS,
+        pb: pbRows.length > 0 ? calcStats(pbRows.map(x => x.pb)) : EMPTY_STATS,
+        price: priceRows.length > 0 ? calcStats(priceRows.map(x => x.close)) : EMPTY_STATS,
       }), [peRows, pbRows, priceRows]);
 
       const latestRow = filtered.length > 0 ? filtered[filtered.length - 1] : null;
@@ -1211,8 +1215,12 @@
               // Indian format: compact arrays [date, pe, pb, bondYield, close]
               processed = processRaw(raw);
             } else if (typeof raw[0] === 'object') {
-              // US format: enriched objects with all fields from server
-              processed = raw;
+              // US format: enriched objects — normalize field names for Dashboard compatibility
+              processed = raw.map(d => ({
+                ...d,
+                bondYield: d.bondYield != null ? d.bondYield : d.gsec10,
+                earningsYield: d.earningsYield != null ? d.earningsYield : (d.pe > 0 ? +((1/d.pe)*100).toFixed(2) : null),
+              }));
             } else {
               processed = raw;
             }
@@ -1243,8 +1251,12 @@
                   // Indian format: compact arrays [date, pe, pb, bondYield, close]
                   processed = processRaw(raw);
                 } else if (typeof raw[0] === 'object') {
-                  // US format: enriched objects
-                  processed = raw;
+                  // US format: normalize field names
+                  processed = raw.map(d => ({
+                    ...d,
+                    bondYield: d.bondYield != null ? d.bondYield : d.gsec10,
+                    earningsYield: d.earningsYield != null ? d.earningsYield : (d.pe > 0 ? +((1/d.pe)*100).toFixed(2) : null),
+                  }));
                 } else {
                   processed = raw;
                 }
@@ -1287,7 +1299,7 @@
       }, [enrichedFiltered]);
       const erpStats = useMemo(() => {
         const vals = erpChartData.filter(d => d.erp != null).map(d => d.erp);
-        return vals.length > 5 ? calcStats(vals) : emptyStats;
+        return vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
       }, [erpChartData]);
       const erpDomain = useMemo(() => {
         const vals = erpChartData.map(d => d.erp).filter(v => v != null);
@@ -1297,7 +1309,7 @@
       const erpTicks = useMemo(() => niceTicks(erpDomain[0], erpDomain[1], 5, 2), [erpDomain]);
       const fiiStats = useMemo(() => {
         const vals = erpChartData.filter(d => d.fii != null).map(d => d.fii);
-        return vals.length > 5 ? calcStats(vals) : emptyStats;
+        return vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
       }, [erpChartData]);
       const fiiDomain = useMemo(() => {
         const vals = erpChartData.map(d => d.fii).filter(v => v != null);
@@ -1340,18 +1352,18 @@
       const mcapTicks = useMemo(() => niceTicks(mcapDomain[0], mcapDomain[1], 5, 0), [mcapDomain]);
       const bmTickInterval = Math.max(1, Math.floor(breadthMcapChartData.length / 8));
 
-      const emptyStats = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+      const EMPTY_STATS = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
       const filteredStats = useMemo(() => {
-        if (filtered.length === 0) return { pe: emptyStats, pb: emptyStats, eyby: emptyStats, by: emptyStats };
+        if (filtered.length === 0) return { pe: EMPTY_STATS, pb: EMPTY_STATS, eyby: EMPTY_STATS, by: EMPTY_STATS };
         const peVals = filtered.map(x => x.pe).filter(v => v != null && isFinite(v));
         const pbVals = filtered.map(x => x.pb).filter(v => v != null && isFinite(v));
         const eybyVals = filtered.map(x => x.eyby).filter(v => v != null && isFinite(v));
         const byVals = filtered.map(x => x.bondYield).filter(v => v != null && isFinite(v));
         return {
-          pe: peVals.length > 1 ? calcStats(peVals) : emptyStats,
-          pb: pbVals.length > 1 ? calcStats(pbVals) : emptyStats,
-          eyby: eybyVals.length > 1 ? calcStats(eybyVals) : emptyStats,
-          by: byVals.length > 1 ? calcStats(byVals) : emptyStats,
+          pe: peVals.length > 1 ? calcStats(peVals) : EMPTY_STATS,
+          pb: pbVals.length > 1 ? calcStats(pbVals) : EMPTY_STATS,
+          eyby: eybyVals.length > 1 ? calcStats(eybyVals) : EMPTY_STATS,
+          by: byVals.length > 1 ? calcStats(byVals) : EMPTY_STATS,
         };
       }, [filtered]);
 
@@ -1418,7 +1430,7 @@
       }, [filteredRatio]);
 
       const ratioStats = useMemo(() => {
-        if (filteredRatio.length === 0) return { pe: emptyStats, pb: emptyStats };
+        if (filteredRatio.length === 0) return { pe: EMPTY_STATS, pb: EMPTY_STATS };
         return { pe: calcStats(filteredRatio.map(x => x.peRatio)), pb: calcStats(filteredRatio.map(x => x.pbRatio)) };
       }, [filteredRatio]);
 
