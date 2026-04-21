@@ -939,7 +939,7 @@
       const pbRows = useMemo(() => filtered.filter(d => d.pb != null && d.pb > 0 && isFinite(d.pb)), [filtered]);
       const priceRows = useMemo(() => filtered.filter(d => d.close != null && d.close > 0), [filtered]);
 
-      const EMPTY_STATS = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+      // EMPTY_STATS is defined at module scope — no redeclaration (Babel var-hoist bug)
       const stats = useMemo(() => ({
         pe: peRows.length > 0 ? calcStats(peRows.map(x => x.pe)) : EMPTY_STATS,
         pb: pbRows.length > 0 ? calcStats(pbRows.map(x => x.pb)) : EMPTY_STATS,
@@ -1328,7 +1328,7 @@
       }, [enrichedFiltered]);
       const breadthStats = useMemo(() => {
         const vals = breadthMcapChartData.filter(d => d.breadth != null).map(d => d.breadth);
-        return vals.length > 5 ? calcStats(vals) : { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+        return vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
       }, [breadthMcapChartData]);
       const breadthDomain = useMemo(() => {
         const vals = breadthMcapChartData.map(d => d.breadth).filter(v => v != null);
@@ -1340,7 +1340,7 @@
       const breadthTicks = useMemo(() => niceTicks(breadthDomain[0], breadthDomain[1], 5, 1), [breadthDomain]);
       const mcapStats = useMemo(() => {
         const vals = breadthMcapChartData.filter(d => d.mcap != null).map(d => d.mcap);
-        return vals.length > 5 ? calcStats(vals) : { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+        return vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
       }, [breadthMcapChartData]);
       const mcapDomain = useMemo(() => {
         const vals = breadthMcapChartData.map(d => d.mcap).filter(v => v != null);
@@ -1352,7 +1352,8 @@
       const mcapTicks = useMemo(() => niceTicks(mcapDomain[0], mcapDomain[1], 5, 0), [mcapDomain]);
       const bmTickInterval = Math.max(1, Math.floor(breadthMcapChartData.length / 8));
 
-      const EMPTY_STATS = { mean:0, sd:0, sd1Upper:0, sd1Lower:0, sd2Upper:0, sd2Lower:0 };
+      // EMPTY_STATS is defined at module scope (line 175) — do NOT redeclare here
+      // because Babel converts const→var, causing var-hoisting shadow bugs.
       const filteredStats = useMemo(() => {
         if (filtered.length === 0) return { pe: EMPTY_STATS, pb: EMPTY_STATS, eyby: EMPTY_STATS, by: EMPTY_STATS };
         const peVals = filtered.map(x => x.pe).filter(v => v != null && isFinite(v));
