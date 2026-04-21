@@ -1376,7 +1376,7 @@
       }, [filtered]);
 
       const chartData = useMemo(() => sampled.map(d => ({
-        ...d, peMean: filteredStats.pe.mean, pbMean: filteredStats.pb.mean, eybyMean: filteredStats.eyby.mean,
+        ...d, peMean: (filteredStats?.pe || EMPTY_STATS).mean, pbMean: (filteredStats?.pb || EMPTY_STATS).mean, eybyMean: (filteredStats?.eyby || EMPTY_STATS).mean,
       })), [sampled, filteredStats]);
 
       const eybyDomain = useMemo(() => {
@@ -1430,12 +1430,13 @@
       }, [filteredRatio]);
 
       const ratioStats = useMemo(() => {
-        if (filteredRatio.length === 0) return { pe: EMPTY_STATS, pb: EMPTY_STATS };
+        const _e = EMPTY_STATS;
+        if (filteredRatio.length === 0) return { pe: {...EMPTY_STATS}, pb: {...EMPTY_STATS} };
         return { pe: calcStats(filteredRatio.map(x => x.peRatio)), pb: calcStats(filteredRatio.map(x => x.pbRatio)) };
       }, [filteredRatio]);
 
       const ratioChartData = useMemo(() => ratioSampled.map(d => ({
-        ...d, peRatioMean: ratioStats.pe.mean, pbRatioMean: ratioStats.pb.mean,
+        ...d, peRatioMean: (ratioStats?.pe || EMPTY_STATS).mean, pbRatioMean: (ratioStats?.pb || EMPTY_STATS).mean,
       })), [ratioSampled, ratioStats]);
 
       const peRatioDomain = useMemo(() => {
@@ -1565,9 +1566,9 @@
 
           {/* KPI Cards */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
-            <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + filteredStats.pe.mean + 'x'} />
-            <StatCard label={indexConfig.shortLabel + " P/B"} value={current.pb} suffix="x" color={C.blue} subtext={'Mean: ' + filteredStats.pb.mean + 'x'} />
-            <StatCard label={taaConfig ? taaConfig.bondLabel : '10Y Bond Yield'} value={current.bondYield} suffix="%" color={C.amber} subtext={'Mean: ' + filteredStats.by.mean + '%'} />
+            <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + (filteredStats?.pe || EMPTY_STATS).mean + 'x'} />
+            <StatCard label={indexConfig.shortLabel + " P/B"} value={current.pb} suffix="x" color={C.blue} subtext={'Mean: ' + (filteredStats?.pb || EMPTY_STATS).mean + 'x'} />
+            <StatCard label={taaConfig ? taaConfig.bondLabel : '10Y Bond Yield'} value={current.bondYield} suffix="%" color={C.amber} subtext={'Mean: ' + (filteredStats?.by || EMPTY_STATS).mean + '%'} />
             <StatCard label="Earnings Yield" value={current.earningsYield} suffix="%" color={C.green} subtext="Inverse of P/E" />
             <StatCard label="EYBY Spread" value={current.eyby} suffix="%"
               color={current.eyby > 0 ? C.red : C.green}
@@ -1603,11 +1604,11 @@
                       <YAxis domain={erpDomain} ticks={erpTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
                       <Tooltip content={<Tip fields={[{ key: 'erp', label: 'ERP', color: C.green, suffix: '%' }]} />} />
                       <ReferenceLine y={0} stroke={C.textMut} strokeWidth={1.5} strokeDasharray="6 4" />
-                      <ReferenceLine y={erpStats.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(erpStats.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
-                      <ReferenceLine y={erpStats.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(erpStats.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
-                      <ReferenceLine y={erpStats.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(erpStats.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
-                      <ReferenceLine y={erpStats.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(erpStats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
-                      <ReferenceLine y={erpStats.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(erpStats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                      <ReferenceLine y={(erpStats || EMPTY_STATS).sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2((erpStats || EMPTY_STATS).sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                      <ReferenceLine y={(erpStats || EMPTY_STATS).sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2((erpStats || EMPTY_STATS).sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                      <ReferenceLine y={(erpStats || EMPTY_STATS).mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2((erpStats || EMPTY_STATS).mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                      <ReferenceLine y={(erpStats || EMPTY_STATS).sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2((erpStats || EMPTY_STATS).sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                      <ReferenceLine y={(erpStats || EMPTY_STATS).sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2((erpStats || EMPTY_STATS).sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
                       <Line type="monotone" dataKey="erp" stroke={C.green} strokeWidth={2} dot={false} isAnimationActive={false} />
                     </ComposedChart>
                   </ResponsiveContainer>
@@ -1642,11 +1643,11 @@
                     { key: 'earningsYield', label: 'Earnings Yield', color: C.green, suffix: '%' },
                   ]} />} />
                   <ReferenceLine y={0} stroke={C.textMut} strokeWidth={1.5} strokeDasharray="6 4" />
-                  <ReferenceLine y={filteredStats.eyby.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + filteredStats.eyby.sd2Upper.toFixed(2) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
-                  <ReferenceLine y={filteredStats.eyby.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + filteredStats.eyby.sd1Upper.toFixed(2) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
-                  <ReferenceLine y={filteredStats.eyby.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + filteredStats.eyby.mean.toFixed(2) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
-                  <ReferenceLine y={filteredStats.eyby.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + filteredStats.eyby.sd1Lower.toFixed(2) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
-                  <ReferenceLine y={filteredStats.eyby.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + filteredStats.eyby.sd2Lower.toFixed(2) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.eyby || EMPTY_STATS).sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + (filteredStats?.eyby || EMPTY_STATS).sd2Upper.toFixed(2) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.eyby || EMPTY_STATS).sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + (filteredStats?.eyby || EMPTY_STATS).sd1Upper.toFixed(2) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.eyby || EMPTY_STATS).mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + (filteredStats?.eyby || EMPTY_STATS).mean.toFixed(2) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.eyby || EMPTY_STATS).sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + (filteredStats?.eyby || EMPTY_STATS).sd1Lower.toFixed(2) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.eyby || EMPTY_STATS).sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + (filteredStats?.eyby || EMPTY_STATS).sd2Lower.toFixed(2) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
                   <Area type="monotone" dataKey="eyby" fill={'url(#eyGrad-'+period+'-'+activeIndex+')'} stroke="none" baseValue={0} isAnimationActive={false} />
                   <Line type="monotone" dataKey="eyby" stroke={C.amber} strokeWidth={2} dot={false} isAnimationActive={false} />
                 </ComposedChart>
@@ -1672,11 +1673,11 @@
                       { key: 'pe', label: 'P/E', color: C.cyan, suffix: 'x' },
                       { key: 'peMean', label: 'Mean', color: C.purple, suffix: 'x' },
                     ]} />} />
-                    <ReferenceLine y={filteredStats.pe.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(filteredStats.pe.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
-                    <ReferenceLine y={filteredStats.pe.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(filteredStats.pe.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={filteredStats.pe.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(filteredStats.pe.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
-                    <ReferenceLine y={filteredStats.pe.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(filteredStats.pe.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={filteredStats.pe.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(filteredStats.pe.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(filteredStats?.pe || EMPTY_STATS).sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2((filteredStats?.pe || EMPTY_STATS).sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(filteredStats?.pe || EMPTY_STATS).sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2((filteredStats?.pe || EMPTY_STATS).sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(filteredStats?.pe || EMPTY_STATS).mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2((filteredStats?.pe || EMPTY_STATS).mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={(filteredStats?.pe || EMPTY_STATS).sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2((filteredStats?.pe || EMPTY_STATS).sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(filteredStats?.pe || EMPTY_STATS).sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2((filteredStats?.pe || EMPTY_STATS).sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
                     <Line type="monotone" dataKey="pe" stroke={C.cyan} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -1698,11 +1699,11 @@
                     { key: 'pb', label: 'P/B', color: C.blue, suffix: 'x' },
                     { key: 'pbMean', label: 'Mean', color: C.purple, suffix: 'x' },
                   ]} />} />
-                  <ReferenceLine y={filteredStats.pb.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(filteredStats.pb.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
-                  <ReferenceLine y={filteredStats.pb.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(filteredStats.pb.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
-                  <ReferenceLine y={filteredStats.pb.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(filteredStats.pb.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
-                  <ReferenceLine y={filteredStats.pb.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(filteredStats.pb.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
-                  <ReferenceLine y={filteredStats.pb.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(filteredStats.pb.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.pb || EMPTY_STATS).sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2((filteredStats?.pb || EMPTY_STATS).sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.pb || EMPTY_STATS).sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2((filteredStats?.pb || EMPTY_STATS).sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.pb || EMPTY_STATS).mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2((filteredStats?.pb || EMPTY_STATS).mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.pb || EMPTY_STATS).sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2((filteredStats?.pb || EMPTY_STATS).sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                  <ReferenceLine y={(filteredStats?.pb || EMPTY_STATS).sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2((filteredStats?.pb || EMPTY_STATS).sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
                   <Line type="monotone" dataKey="pb" stroke={C.blue} strokeWidth={2} dot={false} isAnimationActive={false} />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -1723,11 +1724,11 @@
                     <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(erpChartData.length / 8))} stroke={C.grid} />
                     <YAxis domain={fiiDomain} ticks={fiiTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
                     <Tooltip content={<Tip fields={[{ key: 'fii', label: taaConfig ? taaConfig.fiiLabel.split(' ').slice(0, 3).join(' ') : 'Positioning', color: C.green, suffix: '%' }]} />} />
-                    <ReferenceLine y={fiiStats.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(fiiStats.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
-                    <ReferenceLine y={fiiStats.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(fiiStats.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={fiiStats.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(fiiStats.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
-                    <ReferenceLine y={fiiStats.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(fiiStats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={fiiStats.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(fiiStats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(fiiStats || EMPTY_STATS).sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2((fiiStats || EMPTY_STATS).sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(fiiStats || EMPTY_STATS).sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2((fiiStats || EMPTY_STATS).sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(fiiStats || EMPTY_STATS).mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2((fiiStats || EMPTY_STATS).mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={(fiiStats || EMPTY_STATS).sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2((fiiStats || EMPTY_STATS).sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(fiiStats || EMPTY_STATS).sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2((fiiStats || EMPTY_STATS).sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
                     <Line type="monotone" dataKey="fii" stroke={C.green} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -1748,11 +1749,11 @@
                     <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={bmTickInterval} stroke={C.grid} />
                     <YAxis domain={breadthDomain} ticks={breadthTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
                     <Tooltip content={<Tip fields={[{ key: 'breadth', label: 'Breadth', color: C.blue, suffix: '%' }]} />} />
-                    <ReferenceLine y={breadthStats.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + breadthStats.sd2Upper.toFixed(1) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
-                    <ReferenceLine y={breadthStats.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + breadthStats.sd1Upper.toFixed(1) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={breadthStats.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + breadthStats.mean.toFixed(1) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
-                    <ReferenceLine y={breadthStats.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + breadthStats.sd1Lower.toFixed(1) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={breadthStats.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + breadthStats.sd2Lower.toFixed(1) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(breadthStats || EMPTY_STATS).sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + (breadthStats || EMPTY_STATS).sd2Upper.toFixed(1) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(breadthStats || EMPTY_STATS).sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + (breadthStats || EMPTY_STATS).sd1Upper.toFixed(1) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(breadthStats || EMPTY_STATS).mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + (breadthStats || EMPTY_STATS).mean.toFixed(1) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={(breadthStats || EMPTY_STATS).sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + (breadthStats || EMPTY_STATS).sd1Lower.toFixed(1) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(breadthStats || EMPTY_STATS).sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + (breadthStats || EMPTY_STATS).sd2Lower.toFixed(1) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
                     <Line type="monotone" dataKey="breadth" stroke={C.blue} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -1768,11 +1769,11 @@
                     <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={bmTickInterval} stroke={C.grid} />
                     <YAxis domain={mcapDomain} ticks={mcapTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
                     <Tooltip content={<Tip fields={[{ key: 'mcap', label: 'MCap/GDP', color: C.amber, suffix: '%' }]} />} />
-                    <ReferenceLine y={mcapStats.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + mcapStats.sd2Upper.toFixed(0) + '%)', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
-                    <ReferenceLine y={mcapStats.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + mcapStats.sd1Upper.toFixed(0) + '%)', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={mcapStats.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + mcapStats.mean.toFixed(0) + '%)', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
-                    <ReferenceLine y={mcapStats.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + mcapStats.sd1Lower.toFixed(0) + '%)', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={mcapStats.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + mcapStats.sd2Lower.toFixed(0) + '%)', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(mcapStats || EMPTY_STATS).sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + (mcapStats || EMPTY_STATS).sd2Upper.toFixed(0) + '%)', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(mcapStats || EMPTY_STATS).sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + (mcapStats || EMPTY_STATS).sd1Upper.toFixed(0) + '%)', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(mcapStats || EMPTY_STATS).mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + (mcapStats || EMPTY_STATS).mean.toFixed(0) + '%)', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={(mcapStats || EMPTY_STATS).sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + (mcapStats || EMPTY_STATS).sd1Lower.toFixed(0) + '%)', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(mcapStats || EMPTY_STATS).sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + (mcapStats || EMPTY_STATS).sd2Lower.toFixed(0) + '%)', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
                     <Line type="monotone" dataKey="mcap" stroke={C.amber} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -1802,11 +1803,11 @@
                       { key: 'peRatio', label: 'P/E Ratio', color: C.cyan, suffix: 'x' },
                       { key: 'peRatioMean', label: 'Mean', color: C.purple, suffix: 'x' },
                     ]} />} />
-                    <ReferenceLine y={ratioStats.pe.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(ratioStats.pe.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
-                    <ReferenceLine y={ratioStats.pe.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(ratioStats.pe.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={ratioStats.pe.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(ratioStats.pe.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
-                    <ReferenceLine y={ratioStats.pe.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(ratioStats.pe.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={ratioStats.pe.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(ratioStats.pe.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pe || EMPTY_STATS).sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2((ratioStats?.pe || EMPTY_STATS).sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pe || EMPTY_STATS).sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2((ratioStats?.pe || EMPTY_STATS).sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pe || EMPTY_STATS).mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2((ratioStats?.pe || EMPTY_STATS).mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pe || EMPTY_STATS).sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2((ratioStats?.pe || EMPTY_STATS).sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pe || EMPTY_STATS).sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2((ratioStats?.pe || EMPTY_STATS).sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
                     <Line type="monotone" dataKey="peRatio" stroke={C.cyan} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -1828,11 +1829,11 @@
                       { key: 'pbRatio', label: 'P/B Ratio', color: C.blue, suffix: 'x' },
                       { key: 'pbRatioMean', label: 'Mean', color: C.purple, suffix: 'x' },
                     ]} />} />
-                    <ReferenceLine y={ratioStats.pb.sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2(ratioStats.pb.sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
-                    <ReferenceLine y={ratioStats.pb.sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2(ratioStats.pb.sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={ratioStats.pb.mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2(ratioStats.pb.mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
-                    <ReferenceLine y={ratioStats.pb.sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2(ratioStats.pb.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
-                    <ReferenceLine y={ratioStats.pb.sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2(ratioStats.pb.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pb || EMPTY_STATS).sd2Upper} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+2\u03C3 (' + fmt2((ratioStats?.pb || EMPTY_STATS).sd2Upper) + ')', position: 'insideTopRight', fill: C.red, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pb || EMPTY_STATS).sd1Upper} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '+1\u03C3 (' + fmt2((ratioStats?.pb || EMPTY_STATS).sd1Upper) + ')', position: 'insideTopRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pb || EMPTY_STATS).mean} stroke={C.purple} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: 'Mean (' + fmt2((ratioStats?.pb || EMPTY_STATS).mean) + ')', position: 'insideTopRight', fill: C.purple, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pb || EMPTY_STATS).sd1Lower} stroke={C.amber} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22121\u03C3 (' + fmt2((ratioStats?.pb || EMPTY_STATS).sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber, fontSize: 10 }} />
+                    <ReferenceLine y={(ratioStats?.pb || EMPTY_STATS).sd2Lower} stroke={C.red} strokeWidth={1} strokeDasharray="4 4" label={{ value: '\u22122\u03C3 (' + fmt2((ratioStats?.pb || EMPTY_STATS).sd2Lower) + ')', position: 'insideBottomRight', fill: C.red, fontSize: 10 }} />
                     <Line type="monotone" dataKey="pbRatio" stroke={C.blue} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
