@@ -824,30 +824,27 @@
                 if (k === 'eyby' && valMode !== 'eyby') return false;
                 return true;
               }).map(k => {
-                const isMocked = mockedSignals.has(k);
                 const activeKeys = Object.keys(TAA_DEFAULT_WEIGHTS).filter(kk => {
                   if (kk === 'erp' && valMode !== 'erp') return false;
                   if (kk === 'eyby' && valMode !== 'eyby') return false;
                   return true;
                 });
-                const sumOthers = activeKeys.filter(kk => kk !== k).reduce((a, kk) => a + (mockedSignals.has(kk) ? 0 : weights[kk]), 0);
-                const maxForK = isMocked ? 0 : Math.max(0, +(1.0 - sumOthers).toFixed(2));
+                const sumOthers = activeKeys.filter(kk => kk !== k).reduce((a, kk) => a + weights[kk], 0);
+                const maxForK = Math.max(0, +(1.0 - sumOthers).toFixed(2));
                 return (
-                <div key={k} style={{ opacity: isMocked ? 0.45 : 1 }}>
+                <div key={k}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.textSec, marginBottom: 4 }}>
-                    <span>{TAA_LABELS[k]}{isMocked ? <span style={{ marginLeft: 8, fontSize: 10, color: C.amber, background: 'rgba(245,158,11,0.12)', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>PENDING</span> : null}</span>
-                    <span className="mono" style={{ color: isMocked ? C.textMut : C.text, fontWeight: 600 }}>{isMocked ? '0%' : (weights[k] * 100).toFixed(0) + '%'}</span>
+                    <span>{TAA_LABELS[k]}</span>
+                    <span className="mono" style={{ color: C.text, fontWeight: 600 }}>{(weights[k] * 100).toFixed(0) + '%'}</span>
                   </div>
-                  <input type="range" min="0" max={maxForK} step="0.01" value={isMocked ? 0 : weights[k]}
-                    disabled={isMocked}
+                  <input type="range" min="0" max={maxForK} step="0.01" value={weights[k]}
                     onChange={e => {
-                      if (isMocked) return;
                       const desired = +e.target.value;
                       const capped = Math.min(desired, maxForK);
                       setWeights(prev => ({ ...prev, [k]: +capped.toFixed(2) }));
                       setSavedMsg(false);
                     }}
-                    style={{ width: '100%', cursor: isMocked ? 'not-allowed' : 'pointer' }} />
+                    style={{ width: '100%', cursor: 'pointer' }} />
                 </div>
                 );
               })}
