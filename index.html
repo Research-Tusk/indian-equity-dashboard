@@ -32,8 +32,16 @@
     @media (max-width: 600px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
     .recharts-cartesian-grid-horizontal line,
     .recharts-cartesian-grid-vertical line { stroke: #e2e8f0; }
+    .country-toggle {
+      padding: 6px 18px; border-radius: 6px; font-size: 13px; font-weight: 600;
+      cursor: pointer; border: 1px solid #cbd5e1; background: transparent;
+      color: #64748b; font-family: 'Inter', sans-serif; transition: all 0.15s ease;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .country-toggle:hover { border-color: #94a3b8; color: #334155; }
+    .country-toggle.active { background: #1e293b; border-color: #1e293b; color: #ffffff; }
     .index-tab {
-      padding: 8px 20px; border-radius: 8px; font-size: 14px; font-weight: 500;
+      padding: 7px 18px; border-radius: 6px; font-size: 13px; font-weight: 500;
       cursor: pointer; border: 1px solid #e2e8f0; background: transparent;
       color: #64748b; font-family: 'Inter', sans-serif; transition: all 0.15s ease;
     }
@@ -58,12 +66,19 @@
       green: '#16a34a', red: '#dc2626', blue: '#2563eb', grid: '#e2e8f0',
     };
 
-    const AVAILABLE_INDICES = [
-      { id: 'nifty50', label: 'Nifty 50', shortLabel: 'Nifty 50' },
-      { id: 'sp500', label: 'S&P 500', shortLabel: 'S&P 500' },
-      { id: 'nasdaq', label: 'NASDAQ', shortLabel: 'NASDAQ' },
-      { id: 'nifty-capital-markets', label: 'Nifty Capital Markets', shortLabel: 'Capital Markets' },
-    ];
+    const COUNTRY_INDICES = {
+      india: [
+        { id: 'nifty50', label: 'Nifty 50', shortLabel: 'Nifty 50' },
+        { id: 'nifty-capital-markets', label: 'Nifty Capital Markets', shortLabel: 'Capital Markets' },
+      ],
+      usa: [
+        { id: 'sp500', label: 'S&P 500', shortLabel: 'S&P 500' },
+        { id: 'nasdaq', label: 'NASDAQ', shortLabel: 'NASDAQ' },
+      ],
+    };
+    const COUNTRY_LABELS = { india: 'India', usa: 'USA' };
+    // Flat list for backward compat
+    const AVAILABLE_INDICES = [...COUNTRY_INDICES.india, ...COUNTRY_INDICES.usa];
 
     // Per-index TAA configuration — labels, thresholds, explainer strings
     const TAA_INDEX_CONFIGS = {
@@ -149,10 +164,11 @@
     function fmt2(v) { return (v == null || isNaN(v)) ? '' : (+v).toFixed(2); }
 
     function processRaw(raw) {
-      return raw.map(([date, pe, pb, bondYield, close]) => {
+      return raw.map(row => {
+        const [date, pe, pb, bondYield, close, roe] = row;
         const earningsYield = +((1 / pe) * 100).toFixed(2);
         const eyby = +(bondYield - earningsYield).toFixed(2);
-        return { date, pe, pb, bondYield, earningsYield, eyby, close: close || null };
+        return { date, pe, pb, bondYield, earningsYield, eyby, close: close || null, roe: roe != null ? +roe : null };
       });
     }
 
@@ -496,31 +512,6 @@
       };
     }
 
-    // Derive proxies for fields that aren't yet wired from the backend.
-    // Detect if a signal series is mocked/flat/pending (all identical or all null).
-    function isSignalMocked(arr) {
-      if (!arr || arr.length === 0) return true;
-      const valid = arr.filter(v => v != null);
-      if (valid.length === 0) return true;
-      const first = valid[0];
-      return valid.every(v => v === first);
-    }
-
-    // Overlay for charts with pending data sources
-    function PendingOverlay({ label }) {
-      return (
-        <div style={{ position: 'relative', width: '100%', height: 400 }}>
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.85)', borderRadius: 8, zIndex: 2, backdropFilter: 'blur(4px)' }}>
-            <div style={{ width: 48, height: 48, borderRadius: '50%', border: '2px solid rgba(100,116,139,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            </div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.03em' }}>{label || 'Awaiting API Integration'}</div>
-            <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>Data source pending</div>
-          </div>
-        </div>
-      );
-    }
-
     // These are deterministic transforms of existing fields so the UI works end-to-end.
     // When real feeds arrive with fields fii_fut_net_long / breadth / mcap_gdp / fwd_ey,
     // they will take precedence via the `enrichTaaInputs` function below.
@@ -583,9 +574,8 @@
     // fii_fut and breadth default to 0 while data sources are pending;
     // their 30% is reallocated to erp (+20%) and rsi (+10%).
     const TAA_DEFAULT_WEIGHTS = {
-      rsi: 0.15, fii_fut: 0.00, erp: 0.70, eyby: 0.00, breadth: 0.00, mcap_gdp: 0.15,
+      rsi: 0.10, fii_fut: 0.15, erp: 0.40, eyby: 0.00, breadth: 0.15, mcap_gdp: 0.20,
     };
-    const MOCKED_SIGNALS = new Set(['fii_fut', 'breadth']);
     const TAA_LABELS = {
       rsi: 'RSI-14', fii_fut: 'FII Index Fut Net Long',
       erp: 'Equity Risk Premium', eyby: 'EYBY Spread',
@@ -619,15 +609,6 @@
       // Skip enrichment if data is already in enriched format (US indices)
       const rich = useMemo(() => (needsEnrichment(data) ? enrichTaaInputs(data) : data), [data]);
 
-      // Detect which signals are mocked/flat (pending real data)
-      const mockedSignals = useMemo(() => {
-        if (!rich || rich.length < 30) return new Set();
-        const s = new Set();
-        if (isSignalMocked(rich.map(d => d.fii_fut_net_long))) s.add('fii_fut');
-        if (isSignalMocked(rich.map(d => d.breadth))) s.add('breadth');
-        return s;
-      }, [rich]);
-
       // Build signal arrays (ERP or EYBY as valuation anchor, mutually exclusive)
       const sig = useMemo(() => {
         if (!rich || rich.length < 60) return null;
@@ -658,14 +639,13 @@
         };
       }, [rich]);
 
-      // Effective weights: zero out inactive valuation signal AND mocked signals
+      // Effective weights: zero out inactive valuation signal
       const effWeights = useMemo(() => {
         const ew = { ...weights };
         if (valMode === 'erp') { ew.eyby = 0; }
         else { ew.erp = 0; }
-        for (const k of mockedSignals) { ew[k] = 0; }
         return ew;
-      }, [weights, valMode, mockedSignals]);
+      }, [weights, valMode]);
 
       // Composite z and equity weight series
       const weightSeries = useMemo(() => {
@@ -1208,6 +1188,7 @@
 
     function Dashboard() {
       const [section, setSection] = useState('indices');
+      const [activeCountry, setActiveCountry] = useState('india');
       const [activeIndex, setActiveIndex] = useState('nifty50');
       const [dataCache, setDataCache] = useState({});
       const [loading, setLoading] = useState(true);
@@ -1470,6 +1451,11 @@
         );
       }
 
+      const handleCountrySwitch = (country) => {
+        setActiveCountry(country);
+        const firstIdx = COUNTRY_INDICES[country][0].id;
+        handleIndexSwitch(firstIdx);
+      };
       const handleIndexSwitch = (idx) => {
         setActiveIndex(idx);
         setCountdown(300);
@@ -1543,9 +1529,19 @@
             </div>
           </div>
 
-          {/* Index Selector Tabs */}
+          {/* Tier 1: Country Toggle */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            {Object.keys(COUNTRY_INDICES).map(c => (
+              <button key={c}
+                className={'country-toggle' + (activeCountry === c ? ' active' : '')}
+                onClick={() => handleCountrySwitch(c)}>
+                {COUNTRY_LABELS[c]}
+              </button>
+            ))}
+          </div>
+          {/* Tier 2: Index Selector */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
-            {AVAILABLE_INDICES.map(idx => (
+            {COUNTRY_INDICES[activeCountry].map(idx => (
               <button key={idx.id}
                 className={'index-tab' + (activeIndex === idx.id ? ' active' : '')}
                 onClick={() => handleIndexSwitch(idx.id)}>
@@ -1705,12 +1701,9 @@
           <div className="charts-grid" style={{ marginTop: 24 }}>
             <RSIModule data={data} activeIndex={activeIndex} period={period} customStartISO={customStartISO} />
             {taaConfig && erpChartData.length > 0 && (
-              <ChartCard title={taaConfig.fiiLabel} subtitle={isSignalMocked(erpChartData.map(d => d.fii)) ? "Awaiting live data feed" : "With 1\u03C3 and 2\u03C3 bands"}
-                badge={isSignalMocked(erpChartData.map(d => d.fii)) ? 'PENDING' : (erpChartData.length > 0 && erpChartData[erpChartData.length-1].fii != null ? erpChartData[erpChartData.length-1].fii.toFixed(1) + '%' : 'N/A')}
-                badgeColor={isSignalMocked(erpChartData.map(d => d.fii)) ? C.amber : C.green} badgeBg={isSignalMocked(erpChartData.map(d => d.fii)) ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.15)"}>
-                {isSignalMocked(erpChartData.map(d => d.fii)) ? (
-                  <PendingOverlay label="Awaiting API Integration" />
-                ) : (
+              <ChartCard title={taaConfig.fiiLabel} subtitle="With 1\u03C3 and 2\u03C3 bands"
+                badge={erpChartData.length > 0 && erpChartData[erpChartData.length-1].fii != null ? erpChartData[erpChartData.length-1].fii.toFixed(1) + '%' : 'N/A'}
+                badgeColor={C.green} badgeBg="rgba(34,197,94,0.15)">
                 <ResponsiveContainer width="100%" height={400}>
                   <ComposedChart data={erpChartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
@@ -1725,7 +1718,6 @@
                     <Line type="monotone" dataKey="fii" stroke={C.green} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
-                )}
                 <div style={{ fontSize: 12, color: C.textMut, marginTop: 8, lineHeight: 1.5 }}>{taaConfig.fiiExplainer}</div>
               </ChartCard>
             )}
@@ -1734,12 +1726,9 @@
           {/* Breadth + MCap/GDP side-by-side (TAA-enabled indices, Row 2 below RSI/FII) */}
           {taaConfig && breadthMcapChartData.length > 0 && (
             <div className="charts-grid" style={{ marginTop: 24 }}>
-              <ChartCard title={'Market Breadth (% of ' + (taaConfig ? taaConfig.breadthUniverse : 'Index') + ' > 200 DMA)'} subtitle={isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? "Awaiting live data feed" : "With 1\u03C3 and 2\u03C3 bands"}
-                badge={isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? 'PENDING' : (breadthMcapChartData.length > 0 && breadthMcapChartData[breadthMcapChartData.length-1].breadth != null ? breadthMcapChartData[breadthMcapChartData.length-1].breadth.toFixed(1) + '%' : 'N/A')}
-                badgeColor={isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? C.amber : C.blue} badgeBg={isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? "rgba(245,158,11,0.15)" : "rgba(59,130,246,0.15)"}>
-                {isSignalMocked(breadthMcapChartData.map(d => d.breadth)) ? (
-                  <PendingOverlay label="Awaiting API Integration" />
-                ) : (
+              <ChartCard title={'Market Breadth (% of ' + (taaConfig ? taaConfig.breadthUniverse : 'Index') + ' > 200 DMA)'} subtitle="With 1\u03C3 and 2\u03C3 bands"
+                badge={breadthMcapChartData.length > 0 && breadthMcapChartData[breadthMcapChartData.length-1].breadth != null ? breadthMcapChartData[breadthMcapChartData.length-1].breadth.toFixed(1) + '%' : 'N/A'}
+                badgeColor={C.blue} badgeBg="rgba(59,130,246,0.15)">
                 <ResponsiveContainer width="100%" height={400}>
                   <ComposedChart data={breadthMcapChartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
@@ -1754,7 +1743,6 @@
                     <Line type="monotone" dataKey="breadth" stroke={C.blue} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
-                )}
                 <div style={{ fontSize: 12, color: C.textMut, marginTop: 8, lineHeight: 1.5 }}>{taaConfig ? taaConfig.breadthExplainer : ''}</div>
               </ChartCard>
 
