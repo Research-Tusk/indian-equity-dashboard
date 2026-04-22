@@ -1863,6 +1863,7 @@
 
           {/* Relative Valuation Ratio Charts (Capital Markets only) */}
           {activeIndex === 'nifty-capital-markets' && ratioChartData.length > 0 && (
+            <React.Fragment>
             <div className="charts-grid" style={{ marginTop: 24 }}>
               <ChartCard
                 title="Capital Markets P/E &#247; Nifty 50 P/E"
@@ -1923,6 +1924,7 @@
                 Relative P/B (Spread) cancels out broad market beta noise and highlights true mean reversion. Absolute P/B may remain elevated during secular bull markets driven by the structural financialization of savings. The relative ratio specifically identifies when sector exuberance decouples from fundamental opportunity cost, providing a higher-conviction TAA signal.
               </p>
             </div>
+            </React.Fragment>
           )}
 
           {/* Footer */}
