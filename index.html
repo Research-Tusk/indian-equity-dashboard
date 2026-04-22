@@ -1406,6 +1406,34 @@
 
       const tickInterval = Math.max(1, Math.floor(chartData.length / 8));
 
+      // === ROE vs P/B dual-axis chart data ===
+      const roePbChartData = useMemo(() => {
+        return chartData.map(d => {
+          const roe = (d.pe != null && d.pe > 0 && d.pb != null) ? +((d.pb / d.pe) * 100).toFixed(2) : null;
+          return { date: d.date, pb: d.pb, roe };
+        });
+      }, [chartData]);
+      const currentROE = useMemo(() => {
+        if (roePbChartData.length === 0) return null;
+        return roePbChartData[roePbChartData.length - 1].roe;
+      }, [roePbChartData]);
+      const roeDomain = useMemo(() => {
+        const vals = roePbChartData.map(d => d.roe).filter(v => v != null && isFinite(v));
+        if (vals.length === 0) return [0, 30];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        const pad = (mx - mn) * 0.05 || 1;
+        return [+(mn - pad).toFixed(1), +(mx + pad).toFixed(1)];
+      }, [roePbChartData]);
+      const roeTicks = useMemo(() => niceTicks(roeDomain[0], roeDomain[1], 5, 1), [roeDomain]);
+      const roePbDomain = useMemo(() => {
+        const vals = roePbChartData.map(d => d.pb).filter(v => v != null && isFinite(v));
+        if (vals.length === 0) return [0, 5];
+        const mn = Math.min(...vals); const mx = Math.max(...vals);
+        const pad = (mx - mn) * 0.05 || 0.2;
+        return [+(mn - pad).toFixed(2), +(mx + pad).toFixed(2)];
+      }, [roePbChartData]);
+      const roePbTicks = useMemo(() => niceTicks(roePbDomain[0], roePbDomain[1], 5, 2), [roePbDomain]);
+
       // === Relative Valuation Ratios: Capital Markets / Nifty 50 ===
       const n50Data = dataCache['nifty50'] || [];
       const ratioAll = useMemo(() => {
@@ -1712,6 +1740,53 @@
             </ChartCard>
           </div>
 
+          {/* Analyst explainer — P/B context */}
+          <div style={{ margin: '16px 0 0 0', padding: '14px 18px', borderLeft: '3px solid ' + C.border, borderRadius: '0 8px 8px 0', background: 'rgba(148,163,184,0.04)' }}>
+            <p style={{ fontSize: 13, lineHeight: 1.7, color: C.textMut, margin: 0, fontStyle: 'italic' }}>
+              <span style={{ fontWeight: 600, color: C.textSec }}>Analyst Note:</span>{' '}
+              Absolute P/B may remain structurally elevated during secular bull markets driven by the financialization of savings and rising asset-light business models. Mean-reversion signals in P/B are most actionable when read alongside ROE trends — a falling P/B concurrent with stable ROE suggests genuine cheapening, while a falling P/B accompanied by declining ROE may simply reflect deteriorating fundamentals.
+            </p>
+          </div>
+
+          {/* ROE vs P/B Dual-Axis Overlay Chart */}
+          {roePbChartData.length > 0 && (
+          <div style={{ marginTop: 24 }}>
+            <ChartCard
+              title={indexConfig.shortLabel + " ROE vs. P/B Overlay"}
+              subtitle="Dual-axis: Return on Equity derived from P/B \u00F7 P/E plotted against Price-to-Book"
+              badge={currentROE != null ? currentROE.toFixed(1) + '% ROE' : 'N/A'}
+              badgeColor="#a78bfa" badgeBg="rgba(167,139,250,0.15)"
+            >
+              <ResponsiveContainer width="100%" height={420}>
+                <ComposedChart key={'roepb-'+period+'-'+activeIndex} data={roePbChartData} margin={{ top: 10, right: 50, left: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                  <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={tickInterval} stroke={C.grid} />
+                  <YAxis yAxisId="left" domain={roePbDomain} ticks={roePbTicks} tick={{ fontSize: 11, fill: C.blue }} stroke={C.blue} tickFormatter={v => v + 'x'} />
+                  <YAxis yAxisId="right" orientation="right" domain={roeDomain} ticks={roeTicks} tick={{ fontSize: 11, fill: '#a78bfa' }} stroke="#a78bfa" tickFormatter={v => v + '%'} />
+                  <Tooltip content={<Tip fields={[
+                    { key: 'pb', label: 'P/B Ratio', color: C.blue, suffix: 'x' },
+                    { key: 'roe', label: 'ROE', color: '#a78bfa', suffix: '%' },
+                  ]} />} />
+                  <Area yAxisId="right" type="monotone" dataKey="roe" stroke="none" fill="rgba(167,139,250,0.10)" isAnimationActive={false} />
+                  <Line yAxisId="left" type="monotone" dataKey="pb" stroke={C.blue} strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <Line yAxisId="right" type="monotone" dataKey="roe" stroke="#a78bfa" strokeWidth={2} dot={false} isAnimationActive={false} strokeDasharray="6 3" />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <div style={{ display: 'flex', gap: 20, marginTop: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                  <div style={{ width: 16, height: 3, background: C.blue, borderRadius: 1 }} />
+                  <span style={{ color: C.textMut }}>P/B Ratio (left axis)</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                  <div style={{ width: 16, height: 2, background: '#a78bfa', borderRadius: 1, borderTop: '1px dashed #a78bfa' }} />
+                  <span style={{ color: C.textMut }}>ROE % (right axis)</span>
+                </div>
+                <span className="mono" style={{ fontSize: 11, color: C.textMut, marginLeft: 'auto' }}>ROE = (P/B ÷ P/E) × 100</span>
+              </div>
+            </ChartCard>
+          </div>
+          )}
+
           {/* RSI + FII side-by-side (Nifty 50: FII chart; others: RSI full-width) */}
           <div className="charts-grid" style={{ marginTop: 24 }}>
             <RSIModule data={data} activeIndex={activeIndex} period={period} customStartISO={customStartISO} />
@@ -1840,6 +1915,13 @@
                 </ResponsiveContainer>
                 <ZoneLegend stats={ratioStats.pb} suffix="x" />
               </ChartCard>
+            </div>
+            {/* Analyst explainer — Relative Valuation context */}
+            <div style={{ margin: '16px 0 0 0', padding: '14px 18px', borderLeft: '3px solid ' + C.border, borderRadius: '0 8px 8px 0', background: 'rgba(148,163,184,0.04)' }}>
+              <p style={{ fontSize: 13, lineHeight: 1.7, color: C.textMut, margin: 0, fontStyle: 'italic' }}>
+                <span style={{ fontWeight: 600, color: C.textSec }}>Relative Valuation Note:</span>{' '}
+                Relative P/B (Spread) cancels out broad market beta noise and highlights true mean reversion. Absolute P/B may remain elevated during secular bull markets driven by the structural financialization of savings. The relative ratio specifically identifies when sector exuberance decouples from fundamental opportunity cost, providing a higher-conviction TAA signal.
+              </p>
             </div>
           )}
 
