@@ -82,7 +82,7 @@
     const AVAILABLE_INDICES = [...COUNTRY_INDICES.india, ...COUNTRY_INDICES.usa];
 
     // Per-index TAA configuration — labels, thresholds, explainer strings
-    const TAA_INDEX_CONFIGS = 
+    const TAA_INDEX_CONFIGS = {
       nifty50: {
         fiiLabel: 'FII Index Futures Net Long %',
         fiiExplainer: 'Calculated via No. of Contracts, not exposure value. Acts as the ultimate contrarian gauge. >80% indicates crowded froth (bearish), while <20% signals capitulation (bullish).',
