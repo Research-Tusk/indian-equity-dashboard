@@ -1,0 +1,48 @@
+name: Daily Macro Data Update
+
+on:
+  schedule:
+    - cron: '0 1 * * 2-6'
+  workflow_dispatch:
+
+jobs:
+  update-macro-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Refresh Nifty 50 data
+        run: |
+          RESPONSE=$(curl -sf --max-time 120 \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-data&index=nifty50")
+          echo "$RESPONSE" | jq .
+          MERGED=$(echo "$RESPONSE" | jq -r '.merged // 0')
+          echo "Nifty 50: $MERGED rows merged"
+
+      - name: Refresh Nifty Capital Markets data
+        run: |
+          RESPONSE=$(curl -sf --max-time 120 \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-data&index=nifty-capital-markets")
+          echo "$RESPONSE" | jq .
+          MERGED=$(echo "$RESPONSE" | jq -r '.merged // 0')
+          echo "Nifty Capital Markets: $MERGED rows merged"
+
+      - name: Refresh S&P 500 data
+        run: |
+          RESPONSE=$(curl -sf --max-time 120 \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-data&index=sp500")
+          echo "$RESPONSE" | jq .
+          MERGED=$(echo "$RESPONSE" | jq -r '.merged // 0')
+          echo "S&P 500: $MERGED rows merged"
+
+      - name: Refresh NASDAQ data
+        run: |
+          RESPONSE=$(curl -sf --max-time 120 \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-data&index=nasdaq")
+          echo "$RESPONSE" | jq .
+          MERGED=$(echo "$RESPONSE" | jq -r '.merged // 0')
+          echo "NASDAQ: $MERGED rows merged"
+
+      - name: Health check
+        run: |
+          curl -sf --max-time 30 \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=health" | jq '.indices'
