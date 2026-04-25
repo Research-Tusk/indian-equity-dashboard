@@ -1318,6 +1318,10 @@
       const [countdown, setCountdown] = useState(300);
       const [period, setPeriod] = useState('All');
       const [customStart, setCustomStart] = useState('');
+      // Phase-2: Sector Deep Dives parent tab. Hook MUST live with the other useState calls,
+      // BEFORE the `if (loading && data.length === 0) return (...)` guard further down,
+      // otherwise React error #310 ("rendered more hooks than during the previous render").
+      const [inDeepDive, setInDeepDive] = useState(false);
       const customStartISO = useMemo(() => parseDMY(customStart), [customStart]);
 
       const indexConfig = AVAILABLE_INDICES.find(x => x.id === activeIndex) || AVAILABLE_INDICES[0];
@@ -1615,9 +1619,8 @@
         );
       }
 
-      // Phase-2: Sector Deep Dives parent tab — selecting it activates the dropdown
-      // and switches to a default child (Nifty Pharma). 'inDeepDive' drives tab highlight + dropdown visibility.
-      const [inDeepDive, setInDeepDive] = useState(false);
+      // Phase-2: Sector Deep Dives — DEEP_DIVE_OPTIONS is a plain const (not a hook), safe here.
+      // (The matching `inDeepDive` useState lives at the top with the other hooks — see ~line 1322.)
       const DEEP_DIVE_OPTIONS = [
         { id: 'nifty-pharma',          label: 'Nifty Pharma' },
         { id: 'nifty-infra',           label: 'Nifty Infrastructure' },
