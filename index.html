@@ -1979,7 +1979,7 @@
           {/* RSI + FII side-by-side (Nifty 50: FII chart; others: RSI full-width) */}
           <div className="charts-grid" style={{ marginTop: 24 }}>
             <RSIModule data={data} activeIndex={activeIndex} period={period} customStartISO={customStartISO} />
-            {taaConfig && erpChartData.length > 0 && (
+            {!isSectorIndex(activeIndex) && taaConfig && erpChartData.length > 0 && (
               <ChartCard title={taaConfig.fiiLabel} subtitle="With 1σ and 2σ bands"
                 badge={erpChartData.length > 0 && erpChartData[erpChartData.length-1].fii != null ? erpChartData[erpChartData.length-1].fii.toFixed(1) + '%' : 'N/A'}
                 badgeColor={C.green} badgeBg="rgba(34,197,94,0.15)">
@@ -2002,8 +2002,8 @@
             )}
           </div>
 
-          {/* Breadth + MCap/GDP side-by-side (TAA-enabled indices, Row 2 below RSI/FII) */}
-          {taaConfig && breadthMcapChartData.length > 0 && (
+          {/* Breadth + MCap/GDP side-by-side (broad market only — gated off sector tabs per Phase-3 'less is more') */}
+          {!isSectorIndex(activeIndex) && taaConfig && breadthMcapChartData.length > 0 && (
             <div className="charts-grid" style={{ marginTop: 24 }}>
               <ChartCard title={'Market Breadth (% of ' + (taaConfig ? taaConfig.breadthUniverse : 'Index') + ' > 200 DMA)'} subtitle="With 1σ and 2σ bands"
                 badge={breadthMcapChartData.length > 0 && breadthMcapChartData[breadthMcapChartData.length-1].breadth != null ? breadthMcapChartData[breadthMcapChartData.length-1].breadth.toFixed(1) + '%' : 'N/A'}
@@ -2047,15 +2047,18 @@
             </div>
           )}
 
-          {/* TAA Module (TAA-enabled indices) */}
-          {taaConfig && <TAAModule data={data} taaConfig={taaConfig} />}
+          {/* TAA Module — broad market only (sectors get Relative Valuation instead) */}
+          {!isSectorIndex(activeIndex) && taaConfig && <TAAModule data={data} taaConfig={taaConfig} />}
 
-          {/* Relative Valuation Ratio Charts (Capital Markets only) */}
-          {isSectorIndex(activeIndex) && ratioChartData.length > 0 && (
+          {/* Relative Valuation Ratio Charts — every sector tab vs Nifty 50 baseline */}
+          {isSectorIndex(activeIndex) && ratioChartData.length > 0 && (() => {
+            // Strip weight-percent annotations (e.g. "Financials (35.5%)" → "Financials") for clean chart titles
+            const sectorTitle = (indexConfig.shortLabel || indexConfig.label || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+            return (
             <React.Fragment>
             <div className="charts-grid" style={{ marginTop: 24 }}>
               <ChartCard
-                title="Capital Markets P/E &#247; Nifty 50 P/E"
+                title={sectorTitle + " P/E ÷ Nifty 50 P/E"}
                 subtitle={"Relative P/E valuation ratio with 1σ and 2σ bands"}
                 badge={filteredRatio.length > 0 ? filteredRatio[filteredRatio.length - 1].peRatio.toFixed(2) + 'x' : 'N/A'}
                 badgeColor={C.cyan} badgeBg="rgba(34,211,238,0.15)"
@@ -2081,7 +2084,7 @@
               </ChartCard>
 
               <ChartCard
-                title="Capital Markets P/B &#247; Nifty 50 P/B"
+                title={sectorTitle + " P/B ÷ Nifty 50 P/B"}
                 subtitle={"Relative P/B valuation ratio with 1σ and 2σ bands"}
                 badge={filteredRatio.length > 0 ? filteredRatio[filteredRatio.length - 1].pbRatio.toFixed(2) + 'x' : 'N/A'}
                 badgeColor={C.blue} badgeBg="rgba(59,130,246,0.15)"
@@ -2114,7 +2117,8 @@
               </p>
             </div>
             </React.Fragment>
-          )}
+            );
+          })()}
 
           {/* Footer */}
           <div style={{ textAlign: 'center', padding: '24px 0', fontSize: 12, color: C.textMut, borderTop: '1px solid ' + C.border, marginTop: 32 }}>
