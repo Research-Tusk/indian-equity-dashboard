@@ -76,6 +76,7 @@
         { id: 'nifty-it', label: 'Nifty IT', shortLabel: 'IT (9.4%)' },
         { id: 'nifty-auto', label: 'Nifty Auto', shortLabel: 'Auto (6.6%)' },
         { id: 'nifty-fmcg', label: 'Nifty FMCG', shortLabel: 'FMCG (6.0%)' },
+        { id: 'sector-deep-dives', label: 'Sector Deep Dives', shortLabel: 'Sector Deep Dives' },
       ],
       usa: [
         { id: 'sp500', label: 'S&P 500', shortLabel: 'S&P 500' },
@@ -85,6 +86,16 @@
     const COUNTRY_LABELS = { india: 'India', usa: 'USA' };
     // Flat list for backward compat
     const AVAILABLE_INDICES = [...COUNTRY_INDICES.india, ...COUNTRY_INDICES.usa];
+
+    // Phase-2 architecture: every sector tab (heavyweight + long-tail + capital-markets)
+    // renders the same lean template that 'nifty-capital-markets' originally used.
+    // 'sector-deep-dives' is a parent tab that proxies to a selected child (set in DeepDive picker).
+    const SECTOR_INDEX_IDS = new Set([
+      'nifty-capital-markets',
+      'nifty-fin-service','nifty-energy','nifty-it','nifty-auto','nifty-fmcg',
+      'nifty-pharma','nifty-infra','nifty-commodities','nifty-services-sector'
+    ]);
+    const isSectorIndex = (id) => SECTOR_INDEX_IDS.has(id);
 
     // Per-index TAA configuration — labels, thresholds, explainer strings
     const TAA_INDEX_CONFIGS = {
@@ -129,6 +140,34 @@
         mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
       },
       'nifty-fmcg': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-pharma': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-infra': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-commodities': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-services-sector': {
         fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
         erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
         bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
@@ -626,6 +665,30 @@
       erp: 'Equity Risk Premium', eyby: 'EYBY Spread',
       breadth: 'Breadth (%>200DMA)', mcap_gdp: 'MCap / GDP',
     };
+    // Phase-2: Direction-aware metadata. 'inverse' = lower number is more bullish (contrarian/valuation);
+    // 'positive' = higher number is more bullish. Used for tooltips, slider badges, and Momentum bucket.
+    const TAA_DIRECTIONS = {
+      rsi: 'inverse', fii_fut: 'inverse', erp: 'positive', eyby: 'inverse',
+      breadth: 'positive', mcap_gdp: 'inverse',
+    };
+    const TAA_HELP = {
+      rsi: 'Inverse: higher = overbought (bearish); lower = oversold (bullish).',
+      fii_fut: 'Inverse: higher = crowded long / froth (bearish); lower = capitulation (bullish).',
+      erp: 'Direct: higher = equities cheap vs. bonds (bullish); lower = expensive (bearish).',
+      eyby: 'Inverse: higher = bonds favored (bearish); lower = equities cheap (bullish).',
+      breadth: 'Direct: higher = broad participation (bullish); lower = narrow rally (bearish).',
+      mcap_gdp: 'Inverse: higher = overvaluation (bearish); lower = undervalued (bullish).',
+    };
+    // Group RSI-14 and Breadth under a single "Momentum" parent category.
+    const MOMENTUM_KEYS = ['rsi', 'breadth'];
+    function classifyMomentum(zRsiPositive, zBreadth) {
+      const arr = [zRsiPositive, zBreadth].filter(v => v != null && !isNaN(v));
+      if (arr.length === 0) return { label: 'n/a', color: '#64748b', score: null };
+      const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+      if (avg > 0.5) return { label: 'Strong', color: '#16a34a', score: avg };
+      if (avg < -0.5) return { label: 'Weak', color: '#dc2626', score: avg };
+      return { label: 'Neutral', color: '#d97706', score: avg };
+    }
 
     function TAAModule({ data, taaConfig }) {
       const [weights, setWeights] = useState(TAA_DEFAULT_WEIGHTS);
@@ -741,6 +804,16 @@
         return { zby, cz, w, fii: sig.fii_raw[i], mcap: sig.mcap_raw[i], erp: sig.erp_raw[i] };
       }, [sig, rich, effWeights, slope, weightSeries]);
 
+      // Phase-2: combined Momentum bucket (RSI-14 + Breadth). Both are 'positive direction' raw —
+      // sig.z_rsi has been inverted (so high z = bullish = oversold); flip back for momentum aggregation.
+      const momentumLatest = useMemo(() => {
+        if (!sig || !rich.length) return null;
+        const i = rich.length - 1;
+        const zRsiPos = sig.z_rsi[i] != null ? -sig.z_rsi[i] : null;  // high RSI = strong momentum
+        const zBreadth = sig.z_breadth[i];                              // already positive-direction
+        return classifyMomentum(zRsiPos, zBreadth);
+      }, [sig, rich]);
+
       const [savedMsg, setSavedMsg] = useState(false);
 
       const wPct = latest ? Math.round(latest.w * 100) : 50;
@@ -771,11 +844,18 @@
                 <div style={{ marginTop: 16, fontSize: 12, color: C.textSec }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                     <div><span style={{ color: C.textMut }}>Composite z: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.cz != null ? latest.cz.toFixed(2) : 'n/a'}</span></div>
-                    <div><span style={{ color: C.textMut }}>FII Long %: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.fii != null ? latest.fii.toFixed(1) : 'n/a'}</span></div>
-                    <div><span style={{ color: C.textMut }}>MCap/GDP: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.mcap != null ? latest.mcap.toFixed(0) + '%' : 'n/a'}</span></div>
+                    <div title={TAA_HELP.fii_fut}><span style={{ color: C.textMut }}>FII Long % ↓: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.fii != null ? latest.fii.toFixed(1) : 'n/a'}</span></div>
+                    <div title={TAA_HELP.mcap_gdp}><span style={{ color: C.textMut }}>MCap/GDP ↓: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.mcap != null ? latest.mcap.toFixed(0) + '%' : 'n/a'}</span></div>
                   </div>
+                  {/* Phase-2: Momentum (RSI-14 + Breadth) unified bucket — Strong / Neutral / Weak */}
+                  {momentumLatest && (
+                    <div style={{ marginTop: 12, padding: '10px 14px', borderLeft: '3px solid ' + momentumLatest.color, background: 'rgba(255,255,255,0.5)', borderRadius: 4 }} title="Combines RSI-14 + Breadth (% > 200DMA). Both are positive-direction signals: higher z = stronger momentum.">
+                      <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Momentum (RSI-14 + Breadth)</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: momentumLatest.color, marginTop: 2 }}>{momentumLatest.label}{momentumLatest.score != null ? <span className="mono" style={{ fontSize: 11, color: C.textMut, fontWeight: 400, marginLeft: 8 }}>(z = {momentumLatest.score.toFixed(2)})</span> : null}</div>
+                    </div>
+                  )}
                   <div style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.5, fontStyle: 'italic' }}>
-                    Explainer: A standardized score aggregating all active signals. &gt;0 indicates a bullish tilt (overweight equities), &lt;0 indicates a bearish tilt (underweight/cash tilt).
+                    Explainer: A standardized score aggregating all active signals. &gt;0 indicates a bullish tilt (overweight equities), &lt;0 indicates a bearish tilt (underweight/cash tilt). Arrows ↓ next to FII Long % and MCap/GDP indicate inverse signals — lower values are bullish.
                   </div>
                 </div>
               )}
@@ -877,9 +957,9 @@
                 const sumOthers = activeKeys.filter(kk => kk !== k).reduce((a, kk) => a + weights[kk], 0);
                 const maxForK = Math.max(0, +(1.0 - sumOthers).toFixed(2));
                 return (
-                <div key={k}>
+                <div key={k} title={TAA_HELP[k] || ''}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.textSec, marginBottom: 4 }}>
-                    <span>{TAA_LABELS[k]}</span>
+                    <span>{TAA_LABELS[k]} <span style={{ fontSize: 10, color: TAA_DIRECTIONS[k] === 'inverse' ? '#dc2626' : '#16a34a', fontWeight: 700, marginLeft: 4 }}>{TAA_DIRECTIONS[k] === 'inverse' ? '↓ bull' : '↑ bull'}</span>{MOMENTUM_KEYS.includes(k) ? <span style={{ fontSize: 10, color: C.textMut, marginLeft: 4 }}>· Momentum</span> : null}</span>
                     <span className="mono" style={{ color: C.text, fontWeight: 600 }}>{(weights[k] * 100).toFixed(0) + '%'}</span>
                   </div>
                   <input type="range" min="0" max={maxForK} step="0.01" value={weights[k]}
@@ -1281,7 +1361,7 @@
 
       // Pre-fetch Nifty 50 data for ratio charts when viewing Capital Markets
       useEffect(() => {
-        if (activeIndex === 'nifty-capital-markets') {
+        if (isSectorIndex(activeIndex)) {
           fetch(BASE_URL + '&index=nifty50&t=' + Date.now(), { cache: 'no-store' })
             .then(r => r.json())
             .then(raw => {
@@ -1478,7 +1558,7 @@
       // === Relative Valuation Ratios: Capital Markets / Nifty 50 ===
       const n50Data = dataCache['nifty50'] || [];
       const ratioAll = useMemo(() => {
-        if (activeIndex !== 'nifty-capital-markets' || n50Data.length === 0 || data.length === 0) return [];
+        if (!isSectorIndex(activeIndex) || n50Data.length === 0 || data.length === 0) return [];
         const n50Map = {};
         n50Data.forEach(d => { n50Map[d.date] = d; });
         return data
@@ -1535,12 +1615,32 @@
         );
       }
 
+      // Phase-2: Sector Deep Dives parent tab — selecting it activates the dropdown
+      // and switches to a default child (Nifty Pharma). 'inDeepDive' drives tab highlight + dropdown visibility.
+      const [inDeepDive, setInDeepDive] = useState(false);
+      const DEEP_DIVE_OPTIONS = [
+        { id: 'nifty-pharma',          label: 'Nifty Pharma' },
+        { id: 'nifty-infra',           label: 'Nifty Infrastructure' },
+        { id: 'nifty-commodities',     label: 'Nifty Commodities' },
+        { id: 'nifty-services-sector', label: 'Nifty Services Sector' },
+      ];
+
       const handleCountrySwitch = (country) => {
         setActiveCountry(country);
         const firstIdx = COUNTRY_INDICES[country][0].id;
         handleIndexSwitch(firstIdx);
       };
       const handleIndexSwitch = (idx) => {
+        if (idx === 'sector-deep-dives') {
+          setInDeepDive(true);
+          const target = 'nifty-pharma';
+          setActiveIndex(target);
+          setCountdown(300);
+          if (!dataCache[target]) setLoading(true);
+          else if (dataCache[target].length > 0) setLastUpdated(dataCache[target][dataCache[target].length - 1].date);
+          return;
+        }
+        setInDeepDive(false);
         setActiveIndex(idx);
         setCountdown(300);
         if (!dataCache[idx]) {
@@ -1652,15 +1752,32 @@
           </div>
           {/* Tier 2: Index Selector — horizontally scrollable for sector expansion */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 28, overflowX: 'auto', overflowY: 'hidden', whiteSpace: 'nowrap', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
-            {COUNTRY_INDICES[activeCountry].map(idx => (
-              <button key={idx.id}
-                className={'index-tab' + (activeIndex === idx.id ? ' active' : '')}
-                onClick={() => handleIndexSwitch(idx.id)}
-                style={{ flexShrink: 0 }}>
-                {idx.shortLabel}
-              </button>
-            ))}
+            {COUNTRY_INDICES[activeCountry].map(idx => {
+              const isActive = idx.id === 'sector-deep-dives' ? inDeepDive : (!inDeepDive && activeIndex === idx.id);
+              return (
+                <button key={idx.id}
+                  className={'index-tab' + (isActive ? ' active' : '')}
+                  onClick={() => handleIndexSwitch(idx.id)}
+                  style={{ flexShrink: 0 }}>
+                  {idx.shortLabel}
+                </button>
+              );
+            })}
           </div>
+
+          {/* Sector Deep Dives — instant context swap dropdown (only when parent tab is active) */}
+          {inDeepDive && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, padding: '12px 16px', background: C.card, border: '1px solid ' + C.border, borderRadius: 10 }}>
+              <span style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Sector:</span>
+              <select
+                value={activeIndex}
+                onChange={e => { setInDeepDive(true); setActiveIndex(e.target.value); setCountdown(300); if (!dataCache[e.target.value]) setLoading(true); }}
+                style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '6px 12px', fontSize: 13, color: C.text, fontFamily: 'Inter, sans-serif', fontWeight: 500, cursor: 'pointer', minWidth: 240 }}>
+                {DEEP_DIVE_OPTIONS.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
+              </select>
+              <span style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic' }}>Long-tail sector context — full Capital Markets template.</span>
+            </div>
+          )}
 
           {/* KPI Cards */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
@@ -1822,7 +1939,7 @@
           <div style={{ marginTop: 24 }}>
             <ChartCard
               title={indexConfig.shortLabel + " ROE vs. P/B Overlay"}
-              subtitle="Dual-axis: Return on Equity derived from P/B \u00F7 P/E plotted against Price-to-Book"
+              subtitle="Dual-axis: Return on Equity derived from (P/B \u00F7 P/E) plotted against Price-to-Book"
               badge={currentROE != null ? currentROE.toFixed(1) + '% ROE' : 'N/A'}
               badgeColor="#a78bfa" badgeBg="rgba(167,139,250,0.15)"
             >
@@ -1931,7 +2048,7 @@
           {taaConfig && <TAAModule data={data} taaConfig={taaConfig} />}
 
           {/* Relative Valuation Ratio Charts (Capital Markets only) */}
-          {activeIndex === 'nifty-capital-markets' && ratioChartData.length > 0 && (
+          {isSectorIndex(activeIndex) && ratioChartData.length > 0 && (
             <React.Fragment>
             <div className="charts-grid" style={{ marginTop: 24 }}>
               <ChartCard
