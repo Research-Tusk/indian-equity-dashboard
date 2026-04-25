@@ -71,6 +71,11 @@
       india: [
         { id: 'nifty50', label: 'Nifty 50', shortLabel: 'Nifty 50' },
         { id: 'nifty-capital-markets', label: 'Nifty Capital Markets', shortLabel: 'Capital Markets' },
+        { id: 'nifty-fin-service', label: 'Nifty Financial Services', shortLabel: 'Financials (35.5%)' },
+        { id: 'nifty-energy', label: 'Nifty Energy', shortLabel: 'Energy (11.0%)' },
+        { id: 'nifty-it', label: 'Nifty IT', shortLabel: 'IT (9.4%)' },
+        { id: 'nifty-auto', label: 'Nifty Auto', shortLabel: 'Auto (6.6%)' },
+        { id: 'nifty-fmcg', label: 'Nifty FMCG', shortLabel: 'FMCG (6.0%)' },
       ],
       usa: [
         { id: 'sp500', label: 'S&P 500', shortLabel: 'S&P 500' },
@@ -94,6 +99,41 @@
         mcapGdpHotThreshold: 110,
         fiiCrowdedThreshold: 80,
         fiiCapitulationThreshold: 20,
+      },
+      'nifty-fin-service': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-energy': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-it': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-auto': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-fmcg': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
       },
       sp500: {
         fiiLabel: 'CFTC COT Net Speculator Positioning',
@@ -1610,12 +1650,13 @@
               </button>
             ))}
           </div>
-          {/* Tier 2: Index Selector */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
+          {/* Tier 2: Index Selector — horizontally scrollable for sector expansion */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 28, overflowX: 'auto', overflowY: 'hidden', whiteSpace: 'nowrap', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
             {COUNTRY_INDICES[activeCountry].map(idx => (
               <button key={idx.id}
                 className={'index-tab' + (activeIndex === idx.id ? ' active' : '')}
-                onClick={() => handleIndexSwitch(idx.id)}>
+                onClick={() => handleIndexSwitch(idx.id)}
+                style={{ flexShrink: 0 }}>
                 {idx.shortLabel}
               </button>
             ))}

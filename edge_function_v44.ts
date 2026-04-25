@@ -1,0 +1,542 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': '*',
+  'Content-Type': 'application/json',
+  'Connection': 'keep-alive'
+};
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const NI_HEADERS: Record<string, string> = {
+  'Connection': 'keep-alive',
+  'Accept': 'application/json, text/javascript, */*; q=0.01',
+  'X-Requested-With': 'XMLHttpRequest',
+  'User-Agent': UA,
+  'Content-Type': 'application/json; charset=UTF-8',
+  'Origin': 'https://niftyindices.com',
+  'Referer': 'https://niftyindices.com/reports/historical-data',
+};
+// Realistic browser headers for Investing.com (used for direct AND proxy attempts)
+const INV_HEADERS: Record<string, string> = {
+  'User-Agent': UA,
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Referer': 'https://www.investing.com/rates-bonds/india-10-year-bond-yield-historical-data',
+  'Origin': 'https://www.investing.com',
+  'domain-id': 'in',
+  'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+};
+
+const INDICES: Record<string, {
+  nseIndexName: string; label: string; source: 'api' | 'csv' | 'us';
+  yahooTicker?: string; fwdEpsEnvVar?: string; bvpsEnvVar?: string;
+  cftcTicker?: string; fmpBreadthExchange?: string;
+}> = {
+  'nifty50': { nseIndexName: 'NIFTY 50', label: 'Nifty 50', source: 'api', yahooTicker: '%5ENSEI' },
+  'nifty-capital-markets': { nseIndexName: 'Nifty Capital Markets', label: 'Nifty Capital Markets', source: 'csv' },
+  'nifty-fin-service': { nseIndexName: 'NIFTY FIN SERVICE', label: 'Financials (35.5%)', source: 'api', yahooTicker: 'NIFTY_FIN_SERVICE.NS' },
+  'nifty-energy':      { nseIndexName: 'NIFTY ENERGY',     label: 'Energy (11.0%)',     source: 'api', yahooTicker: '%5ECNXENERGY' },
+  'nifty-it':          { nseIndexName: 'NIFTY IT',         label: 'IT (9.4%)',          source: 'api', yahooTicker: '%5ECNXIT' },
+  'nifty-auto':        { nseIndexName: 'NIFTY AUTO',       label: 'Auto (6.6%)',        source: 'api', yahooTicker: '%5ECNXAUTO' },
+  'nifty-fmcg':        { nseIndexName: 'NIFTY FMCG',       label: 'FMCG (6.0%)',        source: 'api', yahooTicker: '%5ECNXFMCG' },
+  'sp500': { nseIndexName: '', label: 'S&P 500', source: 'us', yahooTicker: '^GSPC', fwdEpsEnvVar: 'SP500_FWD_EPS_ANCHOR', bvpsEnvVar: 'SP500_BVPS_ANCHOR', cftcTicker: 'CFTC/13874A_FO_ALL', fmpBreadthExchange: 'sp500' },
+  'nasdaq': { nseIndexName: '', label: 'NASDAQ', source: 'us', yahooTicker: '^NDX', fwdEpsEnvVar: 'NASDAQ_FWD_EPS_ANCHOR', bvpsEnvVar: 'NASDAQ_BVPS_ANCHOR', cftcTicker: 'CFTC/209742_FO_ALL', fmpBreadthExchange: 'nasdaq' },
+};
+
+const FRED_KEY_FALLBACK = 'd6d6deeb62090decbe4f9f2f684b539b';
+const FWD_EPS_DEFAULTS: Record<string, number> = { sp500: 285, nasdaq: 1050 };
+const BVPS_DEFAULTS: Record<string, number> = { sp500: 1210, nasdaq: 3530 };
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_MAP: Record<string,string> = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+const BASELINE_START_ISO = '2016-04-01';
+const DEPLOY_VERSION = 'v44-sectors';
+
+function getSupabase() {
+  return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+}
+
+async function fetchWithRetry(url: string, init?: RequestInit, attempts = 3): Promise<Response> {
+  let lastErr: any;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const resp = await fetch(url, init);
+      if (resp.ok || resp.status === 404) return resp;
+      lastErr = new Error(`HTTP ${resp.status}`);
+    } catch (e) { lastErr = e; }
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, 500 * Math.pow(2, i)));
+  }
+  throw lastErr;
+}
+
+// Proxy chain for Investing.com (they 403 Supabase Edge IPs directly).
+// Tries direct → corsproxy.io → allorigins.win.
+async function fetchInvestingViaProxies(targetUrl: string): Promise<{ data: any[] } | null> {
+  const attempts: Array<{ name: string; url: string }> = [
+    { name: 'direct', url: targetUrl },
+    { name: 'corsproxy.io', url: `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}` },
+    { name: 'allorigins.win', url: `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}` },
+  ];
+  for (const a of attempts) {
+    try {
+      const r = await fetchWithRetry(a.url, { headers: INV_HEADERS }, 2);
+      if (!r.ok) { console.warn(`[inv] ${a.name} HTTP ${r.status}`); continue; }
+      const text = await r.text();
+      if (!text || text.startsWith('<')) { console.warn(`[inv] ${a.name} non-JSON body (${text.length} bytes)`); continue; }
+      let parsed: any;
+      try { parsed = JSON.parse(text); } catch { console.warn(`[inv] ${a.name} JSON.parse failed`); continue; }
+      if (parsed && Array.isArray(parsed.data)) {
+        console.log(`[inv] ${a.name} OK: ${parsed.data.length} rows`);
+        return parsed;
+      }
+      console.warn(`[inv] ${a.name} unexpected shape`);
+    } catch (e) {
+      console.warn(`[inv] ${a.name} error:`, e);
+    }
+  }
+  return null;
+}
+
+async function logAudit(sb: any, index: string, status: string, latestDate: string | null, message: string) {
+  try { await sb.from('refresh_audit').insert({ index_id: index, status, latest_date: latestDate, message }); } catch (_e) {}
+}
+
+function parseCsvLine(line: string): string[] {
+  const result: string[] = []; let current = ''; let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') inQuotes = !inQuotes;
+    else if (ch === ',' && !inQuotes) { result.push(current.trim()); current = ''; }
+    else current += ch;
+  }
+  result.push(current.trim()); return result;
+}
+
+function fmtNseDate(d: Date): string { return `${String(d.getDate()).padStart(2,'0')}-${MONTH_NAMES[d.getMonth()]}-${d.getFullYear()}`; }
+function parseNseDate(dateStr: string): string { const parts = dateStr.trim().split(' '); return `${parts[2]}-${MONTH_MAP[parts[1]] || '01'}-${parts[0].padStart(2,'0')}`; }
+function toISODate(ts: number): string { const d = new Date(ts * 1000); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+
+async function fetchPEPBCloseFromCSV(indexName: string, fromDate: string, toDate: string): Promise<{date: string; pe: number; pb: number; close: number}[]> {
+  const results: {date: string; pe: number; pb: number; close: number}[] = [];
+  const start = new Date(fromDate); const end = new Date(toDate);
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    if (d.getDay() === 0 || d.getDay() === 6) continue;
+    const dd = String(d.getDate()).padStart(2,'0'); const mm = String(d.getMonth()+1).padStart(2,'0'); const yyyy = d.getFullYear();
+    const isoDate = `${yyyy}-${mm}-${dd}`;
+    try {
+      const url = `https://www.niftyindices.com/Daily_Snapshot/ind_close_all_${dd}${mm}${yyyy}.csv`;
+      const resp = await fetchWithRetry(url, { headers: { 'User-Agent': UA } });
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      if (text.startsWith('<!DOCTYPE') || text.includes('<html')) continue;
+      const lines = text.split('\n').filter(l => l.trim()); if (lines.length < 2) continue;
+      const hdr = parseCsvLine(lines[0]);
+      const peI = hdr.findIndex(h => h.toLowerCase().includes('p/e'));
+      const pbI = hdr.findIndex(h => h.toLowerCase().includes('p/b'));
+      const clI = hdr.findIndex(h => h.toLowerCase().includes('closing index value'));
+      if (peI === -1 || pbI === -1) continue;
+      for (let i = 1; i < lines.length; i++) {
+        const f = parseCsvLine(lines[i]);
+        if (f[0] && f[0].trim().toLowerCase() === indexName.toLowerCase()) {
+          const pe = parseFloat(f[peI]), pb = parseFloat(f[pbI]);
+          const close = clI !== -1 ? parseFloat(f[clI]) : 0;
+          if (!isNaN(pe) && pe > 0 && !isNaN(pb) && pb > 0) results.push({ date: isoDate, pe, pb, close: isNaN(close) ? 0 : close });
+          break;
+        }
+      }
+    } catch (_e) {}
+  }
+  return results;
+}
+
+async function fetchCloseFromCSV(indexName: string, fromDate: string, toDate: string): Promise<Map<string, number>> {
+  const closeMap = new Map<string, number>();
+  const start = new Date(fromDate); const end = new Date(toDate);
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    if (d.getDay() === 0 || d.getDay() === 6) continue;
+    const dd = String(d.getDate()).padStart(2,'0'); const mm = String(d.getMonth()+1).padStart(2,'0'); const yyyy = d.getFullYear();
+    const isoDate = `${yyyy}-${mm}-${dd}`;
+    try {
+      const url = `https://www.niftyindices.com/Daily_Snapshot/ind_close_all_${dd}${mm}${yyyy}.csv`;
+      const resp = await fetchWithRetry(url, { headers: { 'User-Agent': UA } });
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      if (text.startsWith('<!DOCTYPE') || text.includes('<html')) continue;
+      const lines = text.split('\n').filter(l => l.trim()); if (lines.length < 2) continue;
+      const hdr = parseCsvLine(lines[0]);
+      const clI = hdr.findIndex(h => h.toLowerCase().includes('closing index value'));
+      if (clI === -1) continue;
+      for (let i = 1; i < lines.length; i++) {
+        const f = parseCsvLine(lines[i]);
+        if (f[0] && f[0].trim().toLowerCase() === indexName.toLowerCase()) {
+          const close = parseFloat(f[clI]);
+          if (!isNaN(close) && close > 0) closeMap.set(isoDate, close);
+          break;
+        }
+      }
+    } catch (_e) {}
+  }
+  return closeMap;
+}
+
+async function fetchPEPB(indexName: string, fromDate: string, toDate: string) {
+  const cinfo = JSON.stringify({ name: indexName, startDate: fromDate, endDate: toDate, indexName });
+  const r = await fetchWithRetry('https://niftyindices.com/Backpage.aspx/getpepbHistoricaldataDBtoString', { method: 'POST', headers: NI_HEADERS, body: JSON.stringify({ cinfo }) });
+  const j = await r.json(); const raw = JSON.parse(j.d);
+  return raw.map((r: any) => ({ date: parseNseDate(r.DATE), pe: parseFloat(r.pe), pb: parseFloat(r.pb) }));
+}
+
+async function fetchHistoricalClose(indexName: string, fromDate: string, toDate: string): Promise<Map<string, number>> {
+  const closeMap = new Map<string, number>();
+  const cinfo = JSON.stringify({ name: indexName, startDate: fromDate, endDate: toDate, indexName });
+  try {
+    const r = await fetchWithRetry('https://niftyindices.com/Backpage.aspx/getHistoricaldataDBtoString', { method: 'POST', headers: NI_HEADERS, body: JSON.stringify({ cinfo }) });
+    if (!r.ok) return closeMap; const j = await r.json(); const raw = JSON.parse(j.d);
+    for (const row of raw) {
+      const date = parseNseDate(row.CH_TIMESTAMP || row.HistoricalDate || row.DATE || '');
+      const close = parseFloat(row.CH_CLOSING_PRICE || row.CLOSE || row.Close || row.close || '0');
+      if (date && !isNaN(close) && close > 0) closeMap.set(date, close);
+    }
+  } catch (_e) {}
+  return closeMap;
+}
+
+async function fetchYahooClose(ticker: string, fromISO: string, toISO: string): Promise<Map<string, number>> {
+  const closeMap = new Map<string, number>();
+  try {
+    const p1 = Math.floor(new Date(fromISO).getTime() / 1000); const p2 = Math.floor(new Date(toISO).getTime() / 1000) + 86400;
+    const r = await fetchWithRetry(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${p1}&period2=${p2}&interval=1d`, { headers: { 'User-Agent': UA } });
+    if (!r.ok) return closeMap; const j = await r.json(); const result = j?.chart?.result?.[0]; if (!result) return closeMap;
+    const timestamps = result.timestamp || []; const closes = result.indicators?.quote?.[0]?.close || [];
+    for (let i = 0; i < timestamps.length; i++) { if (closes[i] != null && !isNaN(closes[i])) closeMap.set(toISODate(timestamps[i]), +closes[i].toFixed(2)); }
+  } catch (_e) {}
+  return closeMap;
+}
+
+// India 10Y bond yield from Investing.com pairId 24014 — year-chunked with proxy fallback.
+async function fetchBY(fromDate: string, toDate: string) {
+  const allData: { date: string; by: number }[] = [];
+  const startYear = parseInt(fromDate.split('-')[0]);
+  const endYear = parseInt(toDate.split('-')[0]);
+  for (let y = startYear; y <= endYear; y++) {
+    const from = y === startYear ? fromDate : `${y}-01-01`;
+    const to = y === endYear ? toDate : `${y}-12-31`;
+    const target = `https://api.investing.com/api/financialdata/historical/24014?start-date=${from}&end-date=${to}&time-frame=Daily&add-missing-rows=false`;
+    const j = await fetchInvestingViaProxies(target);
+    if (j && Array.isArray(j.data)) {
+      for (const d of j.data) {
+        const date = (d.rowDateTimestamp || '').split('T')[0];
+        const raw = d.last_close ?? d.last_closeRaw;
+        const val = parseFloat(String(raw).replace(/,/g, ''));
+        if (date && !isNaN(val)) allData.push({ date, by: val });
+      }
+    }
+  }
+  // Dedupe by date (keep last occurrence)
+  const byDate = new Map<string, number>();
+  for (const r of allData) byDate.set(r.date, r.by);
+  const out = Array.from(byDate.entries()).map(([date, by]) => ({ date, by }));
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return out;
+}
+
+async function fetchFRED(seriesId: string, apiKey: string, startDate: string): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  try {
+    const r = await fetchWithRetry(`https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${apiKey}&file_type=json&observation_start=${startDate}`, { headers: { 'User-Agent': UA } });
+    if (!r.ok) return result; const j = await r.json();
+    for (const obs of (j.observations || [])) { if (obs.value && obs.value !== '.') result.set(obs.date, parseFloat(obs.value)); }
+  } catch (e) { console.error(`FRED fetch error ${seriesId}:`, e); }
+  return result;
+}
+
+function forwardFill(dates: string[], sparseMap: Map<string, number>): Map<string, number> {
+  const filled = new Map<string, number>(); let lastVal: number | undefined;
+  for (const d of dates) { const v = sparseMap.get(d); if (v !== undefined) lastVal = v; if (lastVal !== undefined) filled.set(d, lastVal); }
+  return filled;
+}
+
+function computeRSI14(closes: number[]): (number | null)[] {
+  const period = 14; const rsi: (number | null)[] = new Array(closes.length).fill(null);
+  if (closes.length < period + 1) return rsi;
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i <= period; i++) { const ch = closes[i] - closes[i-1]; if (ch > 0) avgGain += ch; else avgLoss -= ch; }
+  avgGain /= period; avgLoss /= period;
+  rsi[period] = avgLoss === 0 ? 100 : +(100 - 100/(1+avgGain/avgLoss)).toFixed(2);
+  for (let i = period+1; i < closes.length; i++) {
+    const ch = closes[i] - closes[i-1];
+    avgGain = (avgGain*(period-1) + (ch > 0 ? ch : 0))/period;
+    avgLoss = (avgLoss*(period-1) + (ch < 0 ? -ch : 0))/period;
+    rsi[i] = avgLoss === 0 ? 100 : +(100 - 100/(1+avgGain/avgLoss)).toFixed(2);
+  }
+  return rsi;
+}
+
+async function fetchCFTCCOT(cftcTicker: string, startDate: string): Promise<Map<string, number>> {
+  const result = new Map<string, number>(); const apiKey = Deno.env.get('NASDAQ_DATA_LINK_KEY') || '';
+  if (!apiKey || !cftcTicker) return result;
+  try {
+    const r = await fetchWithRetry(`https://data.nasdaq.com/api/v3/datasets/${cftcTicker}.json?start_date=${startDate}&api_key=${apiKey}&order=asc`, { headers: { 'User-Agent': UA } });
+    if (!r.ok) return result; const j = await r.json();
+    const cols: string[] = (j.dataset?.column_names || []).map((c: string) => c.toLowerCase()); const rows: any[][] = j.dataset?.data || [];
+    const ncLongI = cols.findIndex(c => c.includes('noncommercial') && c.includes('long') && !c.includes('spread'));
+    const ncShortI = cols.findIndex(c => c.includes('noncommercial') && c.includes('short') && !c.includes('spread'));
+    const oiI = cols.findIndex(c => c.includes('open interest'));
+    const longI = ncLongI >= 0 ? ncLongI : cols.findIndex(c => c.includes('long') && !c.includes('spread') && !c.includes('change'));
+    const shortI = ncShortI >= 0 ? ncShortI : cols.findIndex(c => c.includes('short') && !c.includes('spread') && !c.includes('change'));
+    if (longI < 0 || shortI < 0) return result;
+    for (const row of rows) {
+      const date = row[0]; const ncLong = parseFloat(row[longI]); const ncShort = parseFloat(row[shortI]);
+      if (isNaN(ncLong) || isNaN(ncShort)) continue; const net = ncLong - ncShort;
+      if (oiI >= 0) { const oi = parseFloat(row[oiI]); if (!isNaN(oi) && oi > 0) result.set(date, +((net/oi)*100).toFixed(2)); }
+      else result.set(date, +net.toFixed(0));
+    }
+  } catch (e) { console.error(`CFTC fetch error:`, e); }
+  return result;
+}
+
+async function fetchFMPBreadth(exchange: string, startDate: string): Promise<Map<string, number>> {
+  const result = new Map<string, number>(); const apiKey = Deno.env.get('FMP_API_KEY') || '';
+  if (!apiKey || !exchange) return result;
+  try {
+    const r = await fetchWithRetry(`https://financialmodelingprep.com/stable/market-breadth?type=${exchange}&apikey=${apiKey}`, { headers: { 'User-Agent': UA } });
+    if (!r.ok) return result; const j = await r.json();
+    if (Array.isArray(j)) { for (const row of j) { const date = row.date; const pct = row.averageAbove200DMA ?? row.percentAbove200DMA ?? row.breadth ?? null; if (date && pct != null && !isNaN(pct)) { const val = pct > 1 ? pct : pct * 100; result.set(date, +val.toFixed(2)); } } }
+  } catch (e) { console.error(`FMP breadth error:`, e); }
+  return result;
+}
+
+async function refreshUSIndex(sb: any, idx: string, indexConfig: typeof INDICES[string], fullRefresh = false): Promise<{ merged: number; fetchedCloses: number; fetchedBY: number; fetchedWilshire: number; fetchedGDP: number; fetchedCFTC: number; fetchedBreadth: number; latestDate: string | null }> {
+  const { data: latest } = await sb.from('daily_eyby_data').select('date').eq('index_id', idx).order('date', { ascending: false }).limit(1);
+  const lastDate = latest?.[0]?.date || BASELINE_START_ISO;
+  let fromStr: string;
+  if (fullRefresh) { fromStr = BASELINE_START_ISO; } else { const fd = new Date(lastDate); fd.setDate(fd.getDate()-7); fromStr = fd.toISOString().split('T')[0]; }
+  const today = new Date(); today.setDate(today.getDate()+1); const toStr = today.toISOString().split('T')[0];
+  const ticker = indexConfig.yahooTicker || '';
+  const closeSeries = await fetchYahooDailySeries(ticker, fromStr, toStr);
+  if (closeSeries.length === 0) return { merged: 0, fetchedCloses: 0, fetchedBY: 0, fetchedWilshire: 0, fetchedGDP: 0, fetchedCFTC: 0, fetchedBreadth: 0, latestDate: lastDate };
+  const tradingDates = closeSeries.map(c => c.date);
+  const fredKey = Deno.env.get('FRED_API_KEY') || FRED_KEY_FALLBACK;
+  const [rawBY, rawGDP, wilshireSeries, rawCFTC, rawBreadth] = await Promise.all([
+    fetchFRED('DGS10', fredKey, fromStr), fetchFRED('GDP', fredKey, BASELINE_START_ISO),
+    fetchYahooDailySeries('^W5000', fromStr, toStr), fetchCFTCCOT(indexConfig.cftcTicker || '', fromStr),
+    fetchFMPBreadth(indexConfig.fmpBreadthExchange || '', fromStr),
+  ]);
+  const rawWilshire = new Map<string, number>(); for (const w of wilshireSeries) rawWilshire.set(w.date, w.close);
+  const byFilled = forwardFill(tradingDates, rawBY); const wilshireFilled = forwardFill(tradingDates, rawWilshire);
+  const gdpFilled = forwardFill(tradingDates, rawGDP); const cftcFilled = forwardFill(tradingDates, rawCFTC);
+  const breadthFilled = forwardFill(tradingDates, rawBreadth);
+  if (byFilled.size === 0) {
+    const { data: latestByRow } = await sb.from('daily_eyby_data').select('by_yield').eq('index_id', idx).not('by_yield', 'is', null).order('date', { ascending: false }).limit(1);
+    if (latestByRow?.[0]?.by_yield) { const fb = latestByRow[0].by_yield; for (const d of tradingDates) byFilled.set(d, fb); }
+  }
+  const fwdEpsAnchor = parseFloat(Deno.env.get(indexConfig.fwdEpsEnvVar || '') || '0') || FWD_EPS_DEFAULTS[idx] || 0;
+  const bvpsAnchor = parseFloat(Deno.env.get(indexConfig.bvpsEnvVar || '') || '0') || BVPS_DEFAULTS[idx] || 0;
+  const rows: any[] = [];
+  for (const { date, close } of closeSeries) {
+    const by = byFilled.get(date); if (by === undefined) continue;
+    const pe = fwdEpsAnchor > 0 ? +(close/fwdEpsAnchor).toFixed(2) : null;
+    const pb = bvpsAnchor > 0 ? +(close/bvpsAnchor).toFixed(2) : null;
+    const wil = wilshireFilled.get(date); const gdp = gdpFilled.get(date);
+    const mcapGdp = (wil && gdp && gdp > 0) ? +((wil/gdp)*100).toFixed(2) : null;
+    rows.push({ index_id: idx, date, pe, pb, by_yield: +by.toFixed(4), close_price: close, mcap_gdp: mcapGdp, cftc_net_pct: cftcFilled.get(date) ?? null, breadth_pct: breadthFilled.get(date) ?? null });
+  }
+  let merged = 0;
+  for (let i = 0; i < rows.length; i += 500) { const chunk = rows.slice(i, i+500); const { error } = await sb.from('daily_eyby_data').upsert(chunk, { onConflict: 'index_id,date' }); if (error) throw error; merged += chunk.length; }
+  return { merged, fetchedCloses: closeSeries.length, fetchedBY: rawBY.size, fetchedWilshire: rawWilshire.size, fetchedGDP: rawGDP.size, fetchedCFTC: rawCFTC.size, fetchedBreadth: rawBreadth.size, latestDate: rows.length > 0 ? rows[rows.length-1].date : lastDate };
+}
+
+async function fetchYahooDailySeries(symbol: string, fromISO: string, toISO: string): Promise<{date: string; close: number}[]> {
+  const out: {date: string; close: number}[] = [];
+  try {
+    const p1 = Math.floor(new Date(fromISO).getTime()/1000); const p2 = Math.floor(new Date(toISO).getTime()/1000)+86400;
+    const r = await fetchWithRetry(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${p1}&period2=${p2}&interval=1d&includeAdjustedClose=true`, { headers: { 'User-Agent': UA } });
+    if (!r.ok) return out; const j = await r.json(); const result = j?.chart?.result?.[0]; if (!result) return out;
+    const timestamps: number[] = result.timestamp || []; const closes: (number|null)[] = result.indicators?.quote?.[0]?.close || [];
+    for (let i = 0; i < timestamps.length; i++) { const c = closes[i]; if (c != null && !isNaN(c) && c > 0) out.push({ date: toISODate(timestamps[i]), close: +c.toFixed(4) }); }
+  } catch (_e) {}
+  return out;
+}
+
+async function fetchYahooQuarterlyFundamentals(symbol: string): Promise<{ epsQ: {date: string; value: number}[]; bvps: {date: string; value: number}[]; }> {
+  const epsQ: {date: string; value: number}[] = []; const bvps: {date: string; value: number}[] = [];
+  try {
+    const end = Math.floor(Date.now()/1000)+86400;
+    const r = await fetchWithRetry(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(symbol)}?symbol=${encodeURIComponent(symbol)}&type=quarterlyDilutedEPS,quarterlyBookValuePerShare&period1=0&period2=${end}&corsDomain=finance.yahoo.com`, { headers: { 'User-Agent': UA } });
+    if (!r.ok) return { epsQ, bvps }; const j = await r.json();
+    for (const series of (j?.timeseries?.result || [])) {
+      const typeKey = series?.meta?.type?.[0]; if (!typeKey) continue; const rows = series[typeKey]; if (!Array.isArray(rows)) continue;
+      for (const row of rows) { if (!row) continue; const asOf = row.asOfDate; const raw = row.reportedValue?.raw;
+        if (typeof raw === 'number' && !isNaN(raw) && typeof asOf === 'string') { if (typeKey === 'quarterlyDilutedEPS') epsQ.push({ date: asOf, value: raw }); else if (typeKey === 'quarterlyBookValuePerShare') bvps.push({ date: asOf, value: raw }); }
+      }
+    }
+  } catch (_e) {}
+  epsQ.sort((a,b) => a.date.localeCompare(b.date)); bvps.sort((a,b) => a.date.localeCompare(b.date)); return { epsQ, bvps };
+}
+
+function buildTtmEpsTimeline(epsQ: {date: string; value: number}[]): {effectiveFrom: string; ttmEps: number}[] {
+  const timeline: {effectiveFrom: string; ttmEps: number}[] = [];
+  for (let i = 3; i < epsQ.length; i++) { timeline.push({ effectiveFrom: epsQ[i].date, ttmEps: +(epsQ[i].value+epsQ[i-1].value+epsQ[i-2].value+epsQ[i-3].value).toFixed(4) }); }
+  return timeline;
+}
+
+function pickByDate<T extends {effectiveFrom?: string; date?: string}>(timeline: T[], date: string, key: 'effectiveFrom' | 'date'): T | null {
+  if (!timeline.length) return null; let lo = 0, hi = timeline.length-1, best = -1;
+  while (lo <= hi) { const mid = (lo+hi)>>1; if ((timeline[mid] as any)[key] <= date) { best = mid; lo = mid+1; } else hi = mid-1; }
+  return best >= 0 ? timeline[best] : null;
+}
+
+async function refreshStock(sb: any, meta: { ticker: string; yahoo_symbol: string; listing_date: string | null }): Promise<{ ticker: string; fetchedPrices: number; epsQuarters: number; bvpsQuarters: number; merged: number; firstDate: string | null; lastDate: string | null; note?: string }> {
+  const effectiveStart = (meta.listing_date && meta.listing_date > BASELINE_START_ISO) ? meta.listing_date : BASELINE_START_ISO;
+  const todayIso = new Date().toISOString().split('T')[0];
+  const { data: latest } = await sb.from('stocks_daily').select('date').eq('ticker', meta.ticker).order('date', { ascending: false }).limit(1);
+  let fromIso = effectiveStart; const lastKnown = latest?.[0]?.date || null;
+  if (lastKnown) { const d = new Date(lastKnown); d.setDate(d.getDate()-7); const rolled = d.toISOString().split('T')[0]; if (rolled > effectiveStart) fromIso = rolled; }
+  const prices = await fetchYahooDailySeries(meta.yahoo_symbol, fromIso, todayIso);
+  if (prices.length === 0) return { ticker: meta.ticker, fetchedPrices: 0, epsQuarters: 0, bvpsQuarters: 0, merged: 0, firstDate: null, lastDate: null, note: 'no-price-data' };
+  const { epsQ, bvps } = await fetchYahooQuarterlyFundamentals(meta.yahoo_symbol);
+  const ttmTimeline = buildTtmEpsTimeline(epsQ); const rows: any[] = [];
+  for (const p of prices) {
+    const row: any = { ticker: meta.ticker, date: p.date, close: p.close };
+    const ttmMatch = pickByDate(ttmTimeline as any[], p.date, 'effectiveFrom') as any;
+    if (ttmMatch?.ttmEps > 0) { row.eps_ttm = +ttmMatch.ttmEps.toFixed(4); row.pe = +(p.close/ttmMatch.ttmEps).toFixed(4); row.earnings_yield = +((ttmMatch.ttmEps/p.close)*100).toFixed(4); }
+    const bvpsMatch = pickByDate(bvps as any[], p.date, 'date') as any;
+    if (bvpsMatch?.value > 0) { row.bvps = +bvpsMatch.value.toFixed(4); row.pb = +(p.close/bvpsMatch.value).toFixed(4); }
+    rows.push(row);
+  }
+  let merged = 0;
+  for (let i = 0; i < rows.length; i += 500) { const chunk = rows.slice(i, i+500); const { error } = await sb.from('stocks_daily').upsert(chunk, { onConflict: 'ticker,date' }); if (error) throw error; merged += chunk.length; }
+  return { ticker: meta.ticker, fetchedPrices: prices.length, epsQuarters: epsQ.length, bvpsQuarters: bvps.length, merged, firstDate: prices[0].date, lastDate: prices[prices.length-1].date };
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
+  const url = new URL(req.url); const mode = url.searchParams.get('mode') || 'pe-fetch';
+  try {
+    if (mode === 'get-data') {
+      const idx = url.searchParams.get('index') || 'nifty50'; const idxConfig = INDICES[idx]; const sb = getSupabase();
+      const allRows: any[] = []; let from = 0; const pageSize = 1000;
+      const selectCols = idxConfig?.source === 'us' ? 'date, pe, pb, by_yield, close_price, mcap_gdp, cftc_net_pct, breadth_pct' : 'date, pe, pb, by_yield, close_price';
+      while (true) { const { data, error } = await sb.from('daily_eyby_data').select(selectCols).eq('index_id', idx).order('date', { ascending: true }).range(from, from+pageSize-1); if (error) throw error; if (!data || data.length === 0) break; allRows.push(...data); if (data.length < pageSize) break; from += pageSize; }
+      if (idxConfig?.source === 'us' && allRows.length > 0) {
+        const fwdEps = parseFloat(Deno.env.get(idxConfig.fwdEpsEnvVar || '') || '0') || FWD_EPS_DEFAULTS[idx] || 0;
+        const closes = allRows.map((r: any) => r.close_price || 0); const rsiArr = computeRSI14(closes);
+        const enriched = allRows.map((r: any, i: number) => {
+          const close = r.close_price || 0; const gsec10 = r.by_yield || 0; const pe = r.pe || 0;
+          const fwd_ey = fwdEps > 0 && close > 0 ? +((fwdEps/close)*100).toFixed(4) : 0;
+          const earningsYield = pe > 0 ? +(100/pe).toFixed(4) : 0; const eyby = gsec10 > 0 ? +(earningsYield/gsec10).toFixed(4) : 0;
+          const pb = r.pb || 0; const roe = (pb > 0 && pe > 0) ? +((pb/pe)*100).toFixed(2) : null;
+          const rawCftc = r.cftc_net_pct; const fiiNetLong = rawCftc != null ? Math.max(0, Math.min(100, 50 + rawCftc * 1.5)) : null;
+          return { date: r.date, close, pe, pb, gsec10, fwd_ey, erp: +(fwd_ey - gsec10).toFixed(4), eyby, rsi14: rsiArr[i], mcap_gdp: r.mcap_gdp || null, roe, fii_fut_net_long: fiiNetLong != null ? +fiiNetLong.toFixed(2) : null, breadth: r.breadth_pct != null ? +r.breadth_pct : null };
+        });
+        return new Response(JSON.stringify(enriched), { headers: { ...CORS, 'Cache-Control': 'public, max-age=300, s-maxage=300' } });
+      }
+      const compact = allRows.map((r: any) => { const roe = (r.pb > 0 && r.pe > 0) ? +((r.pb/r.pe)*100).toFixed(2) : null; return [r.date, r.pe, r.pb, r.by_yield, r.close_price, roe]; });
+      return new Response(JSON.stringify(compact), { headers: { ...CORS, 'Cache-Control': 'public, max-age=300, s-maxage=300' } });
+    }
+    if (mode === 'env-check') {
+      const envKeys = ['SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','FRED_API_KEY','FMP_API_KEY','NASDAQ_DATA_LINK_KEY','SP500_FWD_EPS_ANCHOR','SP500_BVPS_ANCHOR','NASDAQ_FWD_EPS_ANCHOR','NASDAQ_BVPS_ANCHOR'];
+      const report: Record<string, string> = {};
+      for (const k of envKeys) { const v = Deno.env.get(k); report[k] = v ? `SET (${v.length} chars)` : 'NOT SET'; }
+      for (const idx of ['sp500','nasdaq'] as const) { const cfg = INDICES[idx]; report[`${idx}_effective_fwd_eps`] = String(parseFloat(Deno.env.get(cfg.fwdEpsEnvVar||'')||'0')||FWD_EPS_DEFAULTS[idx]||0); report[`${idx}_effective_bvps`] = String(parseFloat(Deno.env.get(cfg.bvpsEnvVar||'')||'0')||BVPS_DEFAULTS[idx]||0); }
+      report['deploy_version'] = DEPLOY_VERSION;
+      return new Response(JSON.stringify({ ts: new Date().toISOString(), env: report }), { headers: CORS });
+    }
+    if (mode === 'health') {
+      const sb = getSupabase(); const out: any = { ts: new Date().toISOString(), deploy_version: DEPLOY_VERSION, indices: {}, stocks: {} };
+      for (const idx of Object.keys(INDICES)) { const { data } = await sb.from('daily_eyby_data').select('date, pe, pb, by_yield, close_price').eq('index_id', idx).order('date', { ascending: false }).limit(1); const row = data?.[0]; out.indices[idx] = { label: INDICES[idx].label, latestDate: row?.date || null, hasPe: row?.pe != null, hasPb: row?.pb != null, hasByYield: row?.by_yield != null, hasClose: row?.close_price != null }; }
+      try { const { data: stockMeta } = await sb.from('stocks_master').select('ticker').eq('is_active', true); for (const s of (stockMeta || [])) { const { data } = await sb.from('stocks_daily').select('date, close, pe, pb').eq('ticker', s.ticker).order('date', { ascending: false }).limit(1); const r = data?.[0]; out.stocks[s.ticker] = { latestDate: r?.date || null, hasClose: r?.close != null, hasPe: r?.pe != null, hasPb: r?.pb != null }; } } catch (_e) {}
+      try { const { data: audit } = await sb.from('refresh_audit').select('index_id, status, latest_date, message, created_at').order('created_at', { ascending: false }).limit(15); out.recentAudit = audit || []; } catch (_e) { out.recentAudit = []; }
+      return new Response(JSON.stringify(out), { headers: CORS });
+    }
+    if (mode === 'stocks-list') { const sb = getSupabase(); const { data, error } = await sb.from('stocks_master').select('ticker, name, yahoo_symbol, exchange, listing_date, sector, is_active').eq('is_active', true).order('name', { ascending: true }); if (error) throw error; return new Response(JSON.stringify(data || []), { headers: { ...CORS, 'Cache-Control': 'public, max-age=300, s-maxage=300' } }); }
+    if (mode === 'stocks-data') { const ticker = url.searchParams.get('ticker'); if (!ticker) return new Response(JSON.stringify({ error: 'ticker required' }), { status: 400, headers: CORS }); const sb = getSupabase(); const all: any[] = []; let from = 0; while (true) { const { data, error } = await sb.from('stocks_daily').select('date, close, pe, pb, eps_ttm, bvps, earnings_yield').eq('ticker', ticker).order('date', { ascending: true }).range(from, from+999); if (error) throw error; if (!data || data.length === 0) break; all.push(...data); if (data.length < 1000) break; from += 1000; } return new Response(JSON.stringify({ ticker, rows: all.map((r: any) => [r.date, r.close, r.pe, r.pb, r.eps_ttm, r.bvps, r.earnings_yield]) }), { headers: { ...CORS, 'Cache-Control': 'public, max-age=300, s-maxage=300' } }); }
+    if (mode === 'stocks-update') { const ticker = url.searchParams.get('ticker'); if (!ticker) return new Response(JSON.stringify({ error: 'ticker required' }), { status: 400, headers: CORS }); const sb = getSupabase(); const { data, error } = await sb.from('stocks_master').select('ticker, yahoo_symbol, listing_date, is_active').eq('ticker', ticker).limit(1); if (error) throw error; const meta = data?.[0]; if (!meta) return new Response(JSON.stringify({ error: 'unknown ticker' }), { status: 404, headers: CORS }); try { const result = await refreshStock(sb, meta); await logAudit(sb, `stock:${ticker}`, result.note ? 'warn' : 'ok', result.lastDate, `fetched=${result.fetchedPrices} merged=${result.merged}`); return new Response(JSON.stringify(result), { headers: CORS }); } catch (e) { await logAudit(sb, `stock:${ticker}`, 'error', null, String(e)); throw e; } }
+    if (mode === 'stocks-update-all') { const sb = getSupabase(); const { data: list, error } = await sb.from('stocks_master').select('ticker, yahoo_symbol, listing_date, is_active').eq('is_active', true).order('ticker', { ascending: true }); if (error) throw error; const results: any[] = []; for (const meta of (list || [])) { try { const r = await refreshStock(sb, meta as any); results.push(r); } catch (e) { results.push({ ticker: meta.ticker, error: String(e) }); } } return new Response(JSON.stringify(results), { headers: CORS }); }
+    if (mode === 'backfill-close') {
+      const idx = url.searchParams.get('index') || 'nifty50'; const indexConfig = INDICES[idx]; if (!indexConfig) return new Response(JSON.stringify({error: `Unknown index: ${idx}`}), { headers: CORS }); const sb = getSupabase();
+      const missingRows: any[] = []; let offset = 0;
+      while (true) { const { data, error } = await sb.from('daily_eyby_data').select('date').eq('index_id', idx).is('close_price', null).order('date', { ascending: true }).range(offset, offset+999); if (error) throw error; if (!data || data.length === 0) break; missingRows.push(...data); if (data.length < 1000) break; offset += 1000; }
+      if (missingRows.length === 0) return new Response(JSON.stringify({ success: true, message: 'No missing close prices', index: idx }), { headers: CORS });
+      const firstMissing = missingRows[0].date; const lastMissing = missingRows[missingRows.length-1].date;
+      const allCloses = new Map<string, number>(); const startYear = parseInt(firstMissing.split('-')[0]); const endYear = parseInt(lastMissing.split('-')[0]);
+      for (let y = startYear; y <= endYear; y++) { const yearCloses = await fetchHistoricalClose(indexConfig.nseIndexName, fmtNseDate(new Date(y === startYear ? firstMissing : `${y}-01-01`)), fmtNseDate(new Date(y === endYear ? lastMissing : `${y}-12-31`))); for (const [date, close] of yearCloses) allCloses.set(date, close); }
+      if (allCloses.size === 0 && indexConfig.yahooTicker) { const yahooCloses = await fetchYahooClose(indexConfig.yahooTicker, firstMissing, lastMissing); for (const [date, close] of yahooCloses) allCloses.set(date, close); }
+      let updated = 0; const batch: any[] = []; for (const row of missingRows) { const close = allCloses.get(row.date); if (close !== undefined && close > 0) batch.push({ index_id: idx, date: row.date, close_price: close }); }
+      for (let i = 0; i < batch.length; i += 500) { const { error } = await sb.from('daily_eyby_data').upsert(batch.slice(i, i+500), { onConflict: 'index_id,date', ignoreDuplicates: false }); if (error) throw error; updated += batch.slice(i, i+500).length; }
+      return new Response(JSON.stringify({ success: true, index: idx, totalMissing: missingRows.length, updatedRows: updated }), { headers: CORS });
+    }
+    if (mode === 'update-data') {
+      const idx = url.searchParams.get('index') || 'nifty50'; const indexConfig = INDICES[idx]; if (!indexConfig) return new Response(JSON.stringify({error: `Unknown index: ${idx}`}), { headers: CORS }); const sb = getSupabase();
+      const fullRefresh = url.searchParams.get('full') === 'true';
+      if (indexConfig.source === 'us') {
+        try { const result = await refreshUSIndex(sb, idx, indexConfig, fullRefresh); const { count } = await sb.from('daily_eyby_data').select('*', { count: 'exact', head: true }).eq('index_id', idx); await logAudit(sb, idx, result.merged > 0 ? 'ok' : 'no-new-data', result.latestDate, `closes=${result.fetchedCloses} by=${result.fetchedBY} wil=${result.fetchedWilshire} gdp=${result.fetchedGDP} cftc=${result.fetchedCFTC} breadth=${result.fetchedBreadth} merged=${result.merged}`); return new Response(JSON.stringify({ success: true, index: idx, label: indexConfig.label, source: 'us', newLatest: result.latestDate, totalRows: count, fetchedCloses: result.fetchedCloses, fetchedBY: result.fetchedBY, fetchedWilshire: result.fetchedWilshire, fetchedGDP: result.fetchedGDP, fetchedCFTC: result.fetchedCFTC, fetchedBreadth: result.fetchedBreadth, merged: result.merged }), { headers: CORS }); } catch (e) { await logAudit(sb, idx, 'error', null, String(e)); throw e; }
+      }
+      try {
+        const { data: latest } = await sb.from('daily_eyby_data').select('date').eq('index_id', idx).order('date', { ascending: false }).limit(1);
+        const lastDate = latest?.[0]?.date || (indexConfig.source === 'csv' ? '2024-10-01' : '2016-04-01');
+        const fromDate = new Date(lastDate); fromDate.setDate(fromDate.getDate()-3); const today = new Date(); today.setDate(today.getDate()+1);
+        const fromStr = fromDate.toISOString().split('T')[0]; const toStr = today.toISOString().split('T')[0];
+        let pepbData: {date: string; pe: number; pb: number}[]; let closeMap = new Map<string, number>();
+        if (indexConfig.source === 'csv') { const csvData = await fetchPEPBCloseFromCSV(indexConfig.nseIndexName, fromStr, toStr); pepbData = csvData.map(d => ({ date: d.date, pe: d.pe, pb: d.pb })); for (const d of csvData) { if (d.close > 0) closeMap.set(d.date, d.close); } }
+        else { const nseFrom = fmtNseDate(fromDate); const nseTo = fmtNseDate(today); pepbData = await fetchPEPB(indexConfig.nseIndexName, nseFrom, nseTo); closeMap = await fetchCloseFromCSV(indexConfig.nseIndexName.toLowerCase() === 'nifty 50' ? 'Nifty 50' : indexConfig.nseIndexName, fromStr, toStr); }
+        const byData = await fetchBY(fromStr, toStr); const byMap = new Map(byData.map((r: any) => [r.date, r.by]));
+        const byDates = Array.from(byMap.keys()).sort();
+        function getByForDate(date: string): number | undefined { const exact = byMap.get(date); if (exact !== undefined) return exact; let lo = 0, hi = byDates.length-1, best = -1; while (lo <= hi) { const mid = (lo+hi)>>1; if (byDates[mid] <= date) { best = mid; lo = mid+1; } else hi = mid-1; } return best >= 0 ? byMap.get(byDates[best]) : undefined; }
+        let dbFallbackBy: number | undefined;
+        if (byData.length === 0) { const { data: latestByRow } = await sb.from('daily_eyby_data').select('by_yield').eq('index_id', idx).not('by_yield', 'is', null).order('date', { ascending: false }).limit(1); if (latestByRow?.[0]?.by_yield) dbFallbackBy = latestByRow[0].by_yield; }
+        const merged: any[] = [];
+        for (const r of pepbData) { const by = getByForDate(r.date) ?? dbFallbackBy; if (by !== undefined && !isNaN(r.pe) && !isNaN(r.pb) && !isNaN(by)) { const row: any = { index_id: idx, date: r.date, pe: r.pe, pb: r.pb, by_yield: by }; const close = closeMap.get(r.date); if (close !== undefined && close > 0) row.close_price = close; merged.push(row); } }
+        if (merged.length > 0) { const { error } = await sb.from('daily_eyby_data').upsert(merged, { onConflict: 'index_id,date' }); if (error) throw error; }
+        const { data: newLatest } = await sb.from('daily_eyby_data').select('date').eq('index_id', idx).order('date', { ascending: false }).limit(1);
+        const { count } = await sb.from('daily_eyby_data').select('*', { count: 'exact', head: true }).eq('index_id', idx);
+        const newLatestDate = newLatest?.[0]?.date || null;
+        await logAudit(sb, idx, merged.length > 0 ? 'ok' : 'no-new-data', newLatestDate, `merged=${merged.length} fetchedPE=${pepbData.length} fetchedBY=${byData.length} deploy=${DEPLOY_VERSION}`);
+        return new Response(JSON.stringify({ success: true, index: idx, label: indexConfig.label, source: indexConfig.source, newLatest: newLatestDate, totalRows: count, fetchedPE: pepbData.length, fetchedBY: byData.length, fetchedClose: closeMap.size, merged: merged.length, deploy: DEPLOY_VERSION }), { headers: CORS });
+      } catch (e) { await logAudit(sb, idx, 'error', null, String(e)); throw e; }
+    }
+    if (mode === 'update-all') {
+      // Parallelize across 9 indices with Promise.allSettled so we stay inside the 60s edge timeout.
+      const indices = Object.keys(INDICES);
+      const settled = await Promise.allSettled(indices.map(idx =>
+        fetch(`${url.origin}${url.pathname}?mode=update-data&index=${idx}`).then(r => r.json())
+      ));
+      const out = settled.map((s, i) => s.status === 'fulfilled' ? s.value : { index: indices[i], error: String((s as any).reason) });
+      return new Response(JSON.stringify(out), { headers: CORS });
+    }
+    if (mode === 'list-indices') { return new Response(JSON.stringify(INDICES), { headers: CORS }); }
+    if (mode === 'test-us') { const diag: any = { ts: new Date().toISOString(), tests: {} }; const fredKey = Deno.env.get('FRED_API_KEY') || FRED_KEY_FALLBACK; try { const p1 = Math.floor(Date.now()/1000)-86400*10; const p2 = Math.floor(Date.now()/1000)+86400; const yr = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent('^GSPC')}?period1=${p1}&period2=${p2}&interval=1d`, { headers: { 'User-Agent': UA } }); const yText = await yr.text(); diag.tests.yahoo = { status: yr.status, ok: yr.ok, bodyLen: yText.length }; } catch (e) { diag.tests.yahoo = { error: String(e) }; } try { const fr = await fetch(`https://api.stlouisfed.org/fred/series/observations?series_id=DGS10&api_key=${fredKey}&file_type=json&observation_start=2026-04-01`, { headers: { 'User-Agent': UA } }); const fText = await fr.text(); diag.tests.fred = { status: fr.status, ok: fr.ok, bodyLen: fText.length }; } catch (e) { diag.tests.fred = { error: String(e) }; } return new Response(JSON.stringify(diag), { headers: CORS }); }
+    if (mode === 'test-by') {
+      // Diagnostic: exercise each proxy in the chain for Investing.com pairId 24014 so we can see which one is working.
+      const today = new Date(); const from = new Date(); from.setDate(from.getDate()-10);
+      const fromStr = from.toISOString().split('T')[0]; const toStr = today.toISOString().split('T')[0];
+      const target = `https://api.investing.com/api/financialdata/historical/24014?start-date=${fromStr}&end-date=${toStr}&time-frame=Daily&add-missing-rows=false`;
+      const diag: any = { ts: new Date().toISOString(), target, attempts: [] };
+      const routes: Array<{name: string; url: string}> = [
+        { name: 'direct', url: target },
+        { name: 'corsproxy.io', url: `https://corsproxy.io/?url=${encodeURIComponent(target)}` },
+        { name: 'allorigins.win', url: `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}` },
+      ];
+      for (const route of routes) {
+        try {
+          const r = await fetch(route.url, { headers: INV_HEADERS });
+          const text = await r.text();
+          let rows = 0; let firstDate: string | null = null; let lastDate: string | null = null;
+          try { const j = JSON.parse(text); if (j && Array.isArray(j.data)) { rows = j.data.length; firstDate = j.data[0]?.rowDateTimestamp?.split('T')[0] || null; lastDate = j.data[rows-1]?.rowDateTimestamp?.split('T')[0] || null; } } catch (_e) {}
+          diag.attempts.push({ route: route.name, status: r.status, ok: r.ok, bodyLen: text.length, rows, firstDate, lastDate, preview: text.slice(0, 120) });
+        } catch (e) { diag.attempts.push({ route: route.name, error: String(e) }); }
+      }
+      return new Response(JSON.stringify(diag, null, 2), { headers: CORS });
+    }
+    if (mode === 'pe-fetch') { const from = url.searchParams.get('from') || '01-Apr-2016'; const to = url.searchParams.get('to') || '01-Apr-2026'; const indexName = url.searchParams.get('indexName') || 'NIFTY 50'; const cinfo = JSON.stringify({name: indexName, startDate: from, endDate: to, indexName}); const r = await fetchWithRetry('https://niftyindices.com/Backpage.aspx/getpepbHistoricaldataDBtoString', { method: 'POST', headers: NI_HEADERS, body: JSON.stringify({ cinfo }) }); const j = await r.json(); return new Response(j.d, { headers: CORS }); }
+    if (mode === 'by-fetch-full') {
+      // Full 10Y India bond yield dump via proxy chain.
+      const rows = await fetchBY('2016-04-01', new Date().toISOString().split('T')[0]);
+      return new Response(JSON.stringify(rows.map(r => ({ date: r.date, yield: r.by }))), { headers: CORS });
+    }
+    return new Response(JSON.stringify({error:'unknown mode'}), { headers: CORS });
+  } catch (e) { return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: CORS }); }
+});
