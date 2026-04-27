@@ -1357,6 +1357,16 @@
       const [inGlobal, setInGlobal] = useState(false);
       const [macroRibbon, setMacroRibbon] = useState(null);
       const [gdpFactors, setGdpFactors] = useState(null);
+      // Phase-3: macro-ribbon + gdp-factors fetch — MUST live above the loading-guard early return.
+      useEffect(() => {
+        const f = () => {
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=macro-ribbon').then(r => r.json()).then(setMacroRibbon).catch(() => {});
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=gdp-factors').then(r => r.json()).then(setGdpFactors).catch(() => {});
+        };
+        f();
+        const t = setInterval(f, 3600 * 1000);
+        return () => clearInterval(t);
+      }, []);
       const customStartISO = useMemo(() => parseDMY(customStart), [customStart]);
 
       const indexConfig = AVAILABLE_INDICES.find(x => x.id === activeIndex) || AVAILABLE_INDICES[0];
@@ -1699,20 +1709,8 @@
         }
       };
 
-      // Phase-3: Macro Ribbon + GDP Factors — single fetch on mount, refresh hourly.
-      useEffect(() => {
-        const fetchRibbon = () => {
-          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=macro-ribbon')
-            .then(r => r.json()).then(setMacroRibbon).catch(() => {});
-        };
-        const fetchGdp = () => {
-          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=gdp-factors')
-            .then(r => r.json()).then(setGdpFactors).catch(() => {});
-        };
-        fetchRibbon(); fetchGdp();
-        const t = setInterval(() => { fetchRibbon(); fetchGdp(); }, 3600 * 1000);
-        return () => clearInterval(t);
-      }, []);
+      // (Phase-3 macro-ribbon + gdp-factors useEffect lives at the top of Dashboard with the other hooks
+      // — see the block right after the inDeepDive useState — to satisfy rules-of-hooks.)
 
       const dataStartLabel = (activeIndex === 'nifty50') ? 'Apr 2016' : (activeIndex === 'sp500' || activeIndex === 'nasdaq') ? 'Data pending' : 'Oct 2024';
 
