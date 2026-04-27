@@ -82,8 +82,19 @@
         { id: 'sp500', label: 'S&P 500', shortLabel: 'S&P 500' },
         { id: 'nasdaq', label: 'NASDAQ', shortLabel: 'NASDAQ' },
       ],
+      global: [
+        { id: 'global-equities', label: 'Global Equities', shortLabel: 'Global Equities' },
+      ],
     };
-    const COUNTRY_LABELS = { india: 'India', usa: 'USA' };
+    const COUNTRY_LABELS = { india: 'India', usa: 'USA', global: 'Global' };
+    // Phase-3 Global Equities — dropdown options + world-mcap badge text
+    const GLOBAL_OPTIONS = [
+      { id: 'sp500',    label: 'S&P 500 (US)',          worldMcapPct: 62.0 },
+      { id: 'nasdaq',   label: 'NASDAQ (US)',           worldMcapPct: 22.0 },
+      { id: 'kospi200', label: 'KOSPI 200 (S. Korea)',  worldMcapPct: 1.7 },
+      { id: 'bovespa',  label: 'Bovespa (Brazil)',      worldMcapPct: 0.5 },
+      { id: 'twse',     label: 'TWSE (Taiwan)',         worldMcapPct: 1.6 },
+    ];
     // Flat list for backward compat
     const AVAILABLE_INDICES = [...COUNTRY_INDICES.india, ...COUNTRY_INDICES.usa];
 
@@ -197,6 +208,27 @@
         mcapGdpHotThreshold: 170,
         fiiCrowdedThreshold: 80,
         fiiCapitulationThreshold: 20,
+      },
+      kospi200: {
+        fiiLabel: 'CFTC COT Net Speculator Positioning', fiiExplainer: 'Macro proxy — sector-specific positioning data not available for KOSPI.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus Korea 10-Year Bond Yield (FRED IRLTLT01KRM156N).',
+        bondLabel: 'Korea 10Y Bond Yield', breadthUniverse: 'KOSPI 200', breadthExplainer: 'Macro proxy.',
+        mcapGdpExplainer: 'Buffett Indicator. Korea capital markets historically trade at lower mcap/GDP than US.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      bovespa: {
+        fiiLabel: 'CFTC COT Net Speculator Positioning', fiiExplainer: 'Macro proxy.',
+        erpFootnote: 'Note: ERP calculated using Brazil short-term rate (FRED INTGSTBRM193N) — long-end series sparse on FRED.',
+        bondLabel: 'Brazil ST Rate (proxy)', breadthUniverse: 'Bovespa', breadthExplainer: 'Macro proxy.',
+        mcapGdpExplainer: 'Buffett Indicator. Emerging markets typically run lower mcap/GDP than DM.',
+        mcapGdpHotThreshold: 100, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      twse: {
+        fiiLabel: 'CFTC COT Net Speculator Positioning', fiiExplainer: 'Macro proxy.',
+        erpFootnote: 'Note: ERP calculated using US 10Y as global benchmark — Taiwan 10Y series not on FRED.',
+        bondLabel: 'US 10Y (Taiwan benchmark)', breadthUniverse: 'TWSE', breadthExplainer: 'Macro proxy.',
+        mcapGdpExplainer: 'Buffett Indicator. Taiwan runs structurally elevated mcap/GDP given semiconductor concentration.',
+        mcapGdpHotThreshold: 200, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
       },
     };
 
@@ -1322,6 +1354,9 @@
       // BEFORE the `if (loading && data.length === 0) return (...)` guard further down,
       // otherwise React error #310 ("rendered more hooks than during the previous render").
       const [inDeepDive, setInDeepDive] = useState(false);
+      const [inGlobal, setInGlobal] = useState(false);
+      const [macroRibbon, setMacroRibbon] = useState(null);
+      const [gdpFactors, setGdpFactors] = useState(null);
       const customStartISO = useMemo(() => parseDMY(customStart), [customStart]);
 
       const indexConfig = AVAILABLE_INDICES.find(x => x.id === activeIndex) || AVAILABLE_INDICES[0];
@@ -1635,7 +1670,7 @@
       };
       const handleIndexSwitch = (idx) => {
         if (idx === 'sector-deep-dives') {
-          setInDeepDive(true);
+          setInDeepDive(true); setInGlobal(false);
           const target = 'nifty-pharma';
           setActiveIndex(target);
           setCountdown(300);
@@ -1643,7 +1678,17 @@
           else if (dataCache[target].length > 0) setLastUpdated(dataCache[target][dataCache[target].length - 1].date);
           return;
         }
-        setInDeepDive(false);
+        // Phase-3 Global Equities parent — defaults to S&P 500 child
+        if (idx === 'global-equities') {
+          setInGlobal(true); setInDeepDive(false);
+          const target = 'sp500';
+          setActiveIndex(target);
+          setCountdown(300);
+          if (!dataCache[target]) setLoading(true);
+          else if (dataCache[target].length > 0) setLastUpdated(dataCache[target][dataCache[target].length - 1].date);
+          return;
+        }
+        setInDeepDive(false); setInGlobal(false);
         setActiveIndex(idx);
         setCountdown(300);
         if (!dataCache[idx]) {
@@ -1653,6 +1698,21 @@
           if (cached.length > 0) setLastUpdated(cached[cached.length - 1].date);
         }
       };
+
+      // Phase-3: Macro Ribbon + GDP Factors — single fetch on mount, refresh hourly.
+      useEffect(() => {
+        const fetchRibbon = () => {
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=macro-ribbon')
+            .then(r => r.json()).then(setMacroRibbon).catch(() => {});
+        };
+        const fetchGdp = () => {
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=gdp-factors')
+            .then(r => r.json()).then(setGdpFactors).catch(() => {});
+        };
+        fetchRibbon(); fetchGdp();
+        const t = setInterval(() => { fetchRibbon(); fetchGdp(); }, 3600 * 1000);
+        return () => clearInterval(t);
+      }, []);
 
       const dataStartLabel = (activeIndex === 'nifty50') ? 'Apr 2016' : (activeIndex === 'sp500' || activeIndex === 'nasdaq') ? 'Data pending' : 'Oct 2024';
 
@@ -1756,7 +1816,10 @@
           {/* Tier 2: Index Selector — horizontally scrollable for sector expansion */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 28, overflowX: 'auto', overflowY: 'hidden', whiteSpace: 'nowrap', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
             {COUNTRY_INDICES[activeCountry].map(idx => {
-              const isActive = idx.id === 'sector-deep-dives' ? inDeepDive : (!inDeepDive && activeIndex === idx.id);
+              let isActive;
+              if (idx.id === 'sector-deep-dives') isActive = inDeepDive;
+              else if (idx.id === 'global-equities') isActive = inGlobal;
+              else isActive = (!inDeepDive && !inGlobal && activeIndex === idx.id);
               return (
                 <button key={idx.id}
                   className={'index-tab' + (isActive ? ' active' : '')}
@@ -1767,6 +1830,29 @@
               );
             })}
           </div>
+
+          {/* Phase-3: Master Macro Ribbon — sticky color-coded badges below main nav. */}
+          {macroRibbon && (
+            <div style={{ position: 'sticky', top: 0, zIndex: 5, marginBottom: 20, padding: '10px 14px', background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', border: '1px solid ' + C.border, borderRadius: 10, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>Macro Status</span>
+              {[
+                { k: 'dxy',        m: macroRibbon.dxy,        suffix: '%', value: macroRibbon.dxy && macroRibbon.dxy.roc12m != null ? (macroRibbon.dxy.roc12m > 0 ? '+' : '') + macroRibbon.dxy.roc12m.toFixed(2) + '%' : 'n/a',        title: 'Measures Dollar liquidity. Rising DXY signals tightening financial conditions and EM risk-off.' },
+                { k: 'usdjpy',     m: macroRibbon.usdjpy,     suffix: '%', value: macroRibbon.usdjpy && macroRibbon.usdjpy.roc12m != null ? (macroRibbon.usdjpy.roc12m > 0 ? '+' : '') + macroRibbon.usdjpy.roc12m.toFixed(2) + '%' : 'n/a',  title: 'Tracks Yen Carry Trade. Strengthening Yen flags carry trade unwinds and de-risking.' },
+                { k: 'yieldCurve', m: macroRibbon.yieldCurve, suffix: '',  value: macroRibbon.yieldCurve && macroRibbon.yieldCurve.spread != null ? (macroRibbon.yieldCurve.spread > 0 ? '+' : '') + macroRibbon.yieldCurve.spread.toFixed(2) : 'n/a', title: 'Leading macro indicator. Inversion signals recession risk; steepening signals reflation.' },
+              ].map(b => {
+                const sigColor = (b.m && b.m.signal === 'red') ? C.red : (b.m && b.m.signal === 'green') ? C.green : C.amber;
+                const sigBg = (b.m && b.m.signal === 'red') ? 'rgba(220,38,38,0.10)' : (b.m && b.m.signal === 'green') ? 'rgba(22,163,74,0.10)' : 'rgba(217,119,6,0.10)';
+                return (
+                  <div key={b.k} title={b.title} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: sigBg, border: '1px solid ' + sigColor, borderRadius: 999, cursor: 'help' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: sigColor, flexShrink: 0 }} />
+                    <span style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>{b.m ? b.m.label : b.k}</span>
+                    <span className="mono" style={{ fontSize: 12, color: C.text, fontWeight: 700 }}>{b.value}</span>
+                  </div>
+                );
+              })}
+              <span style={{ fontSize: 10, color: C.textMut, fontStyle: 'italic', marginLeft: 'auto' }}>Hover badges for institutional context.</span>
+            </div>
+          )}
 
           {/* Sector Deep Dives — instant context swap dropdown (only when parent tab is active) */}
           {inDeepDive && (
@@ -1779,6 +1865,60 @@
                 {DEEP_DIVE_OPTIONS.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
               </select>
               <span style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic' }}>Long-tail sector context — full Capital Markets template.</span>
+            </div>
+          )}
+
+          {/* Phase-3: Global Equities — instant region swap dropdown (only when parent tab is active) */}
+          {inGlobal && (() => {
+            const opt = GLOBAL_OPTIONS.find(o => o.id === activeIndex) || GLOBAL_OPTIONS[0];
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, padding: '12px 16px', background: C.card, border: '1px solid ' + C.border, borderRadius: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Region:</span>
+                <select
+                  value={activeIndex}
+                  onChange={e => { setInGlobal(true); setActiveIndex(e.target.value); setCountdown(300); if (!dataCache[e.target.value]) setLoading(true); }}
+                  style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '6px 12px', fontSize: 13, color: C.text, fontFamily: 'Inter, sans-serif', fontWeight: 500, cursor: 'pointer', minWidth: 240 }}>
+                  {GLOBAL_OPTIONS.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
+                </select>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: 'rgba(8,145,178,0.10)', border: '1px solid ' + C.cyan, borderRadius: 999, fontSize: 11, color: C.cyan, fontWeight: 700 }}>
+                  {opt.worldMcapPct.toFixed(1)}% of World Market Cap
+                </span>
+                <span style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic' }}>Same template as USA — P/E, P/B, Bond Yield, EYBY, Equity Risk Premium.</span>
+              </div>
+            );
+          })()}
+
+          {/* Phase-3: GDP Factor Matrix — invisible-math card surfacing the leading GDP component (Indian view only) */}
+          {activeCountry === 'india' && gdpFactors && gdpFactors.factors && (
+            <div style={{ marginBottom: 24, padding: '12px 16px', background: C.card, border: '1px solid ' + C.border, borderRadius: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>GDP Factor Matrix</span>
+                  {gdpFactors.factors.map(f => {
+                    const isLead = gdpFactors.leading && gdpFactors.leading.factor === f.factor;
+                    const fc = isLead ? C.green : C.textSec;
+                    return (
+                      <div key={f.factor} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                        <span className="mono" style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>{f.factor}</span>
+                        <span style={{ fontSize: 12, color: fc, fontWeight: isLead ? 700 : 500 }}>
+                          {f.yoy != null ? (f.yoy > 0 ? '+' : '') + f.yoy.toFixed(2) + '%' : 'n/a'}
+                        </span>
+                        {isLead && <span style={{ fontSize: 10, color: C.green, fontWeight: 700 }}>★</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 11, color: C.textSec }}>
+                  Implied Overweight: {gdpFactors.leading ? (
+                    <span style={{ color: C.green, fontWeight: 700 }}>
+                      {gdpFactors.leading.sectors.join(' / ')}
+                    </span>
+                  ) : <span style={{ color: C.textMut }}>—</span>}
+                </div>
+              </div>
+              <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, fontStyle: 'italic' }}>
+                C = Private Consumption · I = Gross Fixed Capital Formation · X-M = Net Exports. Leading factor's sectors get the GDP-implied tilt.
+              </div>
             </div>
           )}
 
@@ -1942,7 +2082,7 @@
           <div style={{ marginTop: 24 }}>
             <ChartCard
               title={indexConfig.shortLabel + " ROE vs. P/B Overlay"}
-              subtitle="Dual-axis: Return on Equity derived from (P/B \u00F7 P/E) plotted against Price-to-Book"
+              subtitle={"Dual-axis: Return on Equity derived from (P/B ÷ P/E) plotted against Price-to-Book"}
               badge={currentROE != null ? currentROE.toFixed(1) + '% ROE' : 'N/A'}
               badgeColor="#a78bfa" badgeBg="rgba(167,139,250,0.15)"
             >
