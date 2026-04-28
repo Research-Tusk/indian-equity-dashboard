@@ -67,40 +67,41 @@
       green: '#16a34a', red: '#dc2626', blue: '#2563eb', grid: '#e2e8f0',
     };
 
+    // Phase-4 flat navigation: 3 main top tabs (INDIA / GLOBAL / GLOBAL MACRO).
+    // No dropdowns — all sub-tabs flat in horizontal scrollable strip.
     const COUNTRY_INDICES = {
       india: [
-        { id: 'nifty50', label: 'Nifty 50', shortLabel: 'Nifty 50' },
-        { id: 'nifty-capital-markets', label: 'Nifty Capital Markets', shortLabel: 'Capital Markets' },
-        { id: 'nifty-fin-service', label: 'Nifty Financial Services', shortLabel: 'Financials (35.5%)' },
-        { id: 'nifty-energy', label: 'Nifty Energy', shortLabel: 'Energy (11.0%)' },
-        { id: 'nifty-it', label: 'Nifty IT', shortLabel: 'IT (9.4%)' },
-        { id: 'nifty-auto', label: 'Nifty Auto', shortLabel: 'Auto (6.6%)' },
-        { id: 'nifty-fmcg', label: 'Nifty FMCG', shortLabel: 'FMCG (6.0%)' },
-        { id: 'sector-deep-dives', label: 'Sector Deep Dives', shortLabel: 'Sector Deep Dives' },
-      ],
-      usa: [
-        { id: 'sp500', label: 'S&P 500', shortLabel: 'S&P 500' },
-        { id: 'nasdaq', label: 'NASDAQ', shortLabel: 'NASDAQ' },
+        { id: 'nifty50',                label: 'Nifty 50',              shortLabel: 'Nifty 50' },
+        { id: 'nifty-capital-markets',  label: 'Nifty Capital Markets', shortLabel: 'Capital Markets' },
+        { id: 'nifty-fin-service',      label: 'Nifty Financial Services', shortLabel: 'Financials' },
+        { id: 'nifty-energy',           label: 'Nifty Energy',          shortLabel: 'Energy' },
+        { id: 'nifty-it',               label: 'Nifty IT',              shortLabel: 'IT' },
+        { id: 'nifty-auto',             label: 'Nifty Auto',            shortLabel: 'Auto' },
+        { id: 'nifty-fmcg',             label: 'Nifty FMCG',            shortLabel: 'FMCG' },
+        { id: 'nifty-pharma',           label: 'Nifty Pharma',          shortLabel: 'Pharma' },
+        { id: 'nifty-infra',            label: 'Nifty Infra',           shortLabel: 'Infra' },
+        { id: 'nifty-commodities',      label: 'Nifty Commodities',     shortLabel: 'Commodities' },
+        { id: 'nifty-services-sector',  label: 'Nifty Services Sector', shortLabel: 'Services' },
       ],
       global: [
-        { id: 'global-equities', label: 'Global Equities', shortLabel: 'Global Equities' },
+        { id: 'sp500',    label: 'S&P 500',    shortLabel: 'S&P 500',    worldMcapPct: 62.0 },
+        { id: 'nasdaq',   label: 'NASDAQ',     shortLabel: 'NASDAQ',     worldMcapPct: 22.0 },
+        { id: 'nikkei',   label: 'Nikkei 225', shortLabel: 'Nikkei 225', worldMcapPct: 5.5 },
+        { id: 'stoxx600', label: 'STOXX 600',  shortLabel: 'STOXX 600',  worldMcapPct: 11.0 },
+        { id: 'hangseng', label: 'Hang Seng',  shortLabel: 'Hang Seng',  worldMcapPct: 3.5 },
+        { id: 'kospi200', label: 'KOSPI 200',  shortLabel: 'KOSPI',      worldMcapPct: 1.7 },
+        { id: 'bovespa',  label: 'Bovespa',    shortLabel: 'BOVESPA',    worldMcapPct: 0.5 },
+        { id: 'twse',     label: 'TWSE',       shortLabel: 'TWSE',       worldMcapPct: 1.6 },
+      ],
+      'global-macro': [
+        { id: 'global-macro-hub', label: 'Global Macro Hub', shortLabel: 'Macro Hub' },
       ],
     };
-    const COUNTRY_LABELS = { india: 'India', usa: 'USA', global: 'Global' };
-    // Phase-3 Global Equities — dropdown options + world-mcap badge text
-    const GLOBAL_OPTIONS = [
-      { id: 'sp500',    label: 'S&P 500 (US)',          worldMcapPct: 62.0 },
-      { id: 'nasdaq',   label: 'NASDAQ (US)',           worldMcapPct: 22.0 },
-      { id: 'kospi200', label: 'KOSPI 200 (S. Korea)',  worldMcapPct: 1.7 },
-      { id: 'bovespa',  label: 'Bovespa (Brazil)',      worldMcapPct: 0.5 },
-      { id: 'twse',     label: 'TWSE (Taiwan)',         worldMcapPct: 1.6 },
-    ];
+    const COUNTRY_LABELS = { india: 'India', global: 'Global', 'global-macro': 'Global Macro' };
     // Flat list for backward compat
-    const AVAILABLE_INDICES = [...COUNTRY_INDICES.india, ...COUNTRY_INDICES.usa];
+    const AVAILABLE_INDICES = [...COUNTRY_INDICES.india, ...COUNTRY_INDICES.global, ...COUNTRY_INDICES['global-macro']];
 
-    // Phase-2 architecture: every sector tab (heavyweight + long-tail + capital-markets)
-    // renders the same lean template that 'nifty-capital-markets' originally used.
-    // 'sector-deep-dives' is a parent tab that proxies to a selected child (set in DeepDive picker).
+    // Phase-4: every sector tab (capital-markets + 9 flat sectors) renders the lean Capital Markets template.
     const SECTOR_INDEX_IDS = new Set([
       'nifty-capital-markets',
       'nifty-fin-service','nifty-energy','nifty-it','nifty-auto','nifty-fmcg',
@@ -229,6 +230,27 @@
         bondLabel: 'US 10Y (Taiwan benchmark)', breadthUniverse: 'TWSE', breadthExplainer: 'Macro proxy.',
         mcapGdpExplainer: 'Buffett Indicator. Taiwan runs structurally elevated mcap/GDP given semiconductor concentration.',
         mcapGdpHotThreshold: 200, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      nikkei: {
+        fiiLabel: 'CFTC COT Net Speculator Positioning', fiiExplainer: 'Macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus Japan 10Y Bond Yield (FRED IRLTLT01JPM156N).',
+        bondLabel: 'Japan 10Y Bond Yield', breadthUniverse: 'Nikkei 225', breadthExplainer: 'Macro proxy.',
+        mcapGdpExplainer: 'Buffett Indicator. Japan typically runs elevated mcap/GDP given mature corporate sector.',
+        mcapGdpHotThreshold: 130, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      stoxx600: {
+        fiiLabel: 'CFTC COT Net Speculator Positioning', fiiExplainer: 'Macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus Eurozone 10Y Bond Yield (FRED IRLTLT01EZM156N).',
+        bondLabel: 'Eurozone 10Y Bond Yield', breadthUniverse: 'STOXX 600', breadthExplainer: 'Macro proxy.',
+        mcapGdpExplainer: 'Buffett Indicator. European markets typically run lower mcap/GDP than US.',
+        mcapGdpHotThreshold: 100, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      hangseng: {
+        fiiLabel: 'CFTC COT Net Speculator Positioning', fiiExplainer: 'Macro proxy.',
+        erpFootnote: 'Note: ERP calculated using US 10Y as global benchmark — China/HK 10Y series sparse on FRED.',
+        bondLabel: 'US 10Y (HK benchmark)', breadthUniverse: 'Hang Seng', breadthExplainer: 'Macro proxy.',
+        mcapGdpExplainer: 'Buffett Indicator. Hong Kong is a global financial hub — mcap/GDP runs structurally elevated.',
+        mcapGdpHotThreshold: 1000, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
       },
     };
 
@@ -836,193 +858,106 @@
         return { zby, cz, w, fii: sig.fii_raw[i], mcap: sig.mcap_raw[i], erp: sig.erp_raw[i] };
       }, [sig, rich, effWeights, slope, weightSeries]);
 
-      // Phase-2: combined Momentum bucket (RSI-14 + Breadth). Both are 'positive direction' raw —
-      // sig.z_rsi has been inverted (so high z = bullish = oversold); flip back for momentum aggregation.
-      const momentumLatest = useMemo(() => {
-        if (!sig || !rich.length) return null;
-        const i = rich.length - 1;
-        const zRsiPos = sig.z_rsi[i] != null ? -sig.z_rsi[i] : null;  // high RSI = strong momentum
-        const zBreadth = sig.z_breadth[i];                              // already positive-direction
-        return classifyMomentum(zRsiPos, zBreadth);
-      }, [sig, rich]);
+      // Phase-4: 90-day EPS Momentum factor (zero-API derived) — Derived EPS = Close / P/E.
+      // Compute ROC vs the same metric 90 trading days back, then z-score it on a 252-day rolling window.
+      const epsMomentumSeries = useMemo(() => {
+        if (!rich || rich.length === 0) return [];
+        const eps = rich.map(d => (d.close && d.pe && d.pe > 0) ? (d.close / d.pe) : null);
+        const lag = 63; // 63 trading days ≈ 90 calendar days
+        const roc = eps.map((v, i) => {
+          if (i < lag || v == null) return null;
+          const past = eps[i - lag]; if (past == null || past <= 0) return null;
+          return ((v / past) - 1) * 100;
+        });
+        return roc;
+      }, [rich]);
+      const z_eps_momentum = useMemo(() => rollingZ(epsMomentumSeries, 252), [epsMomentumSeries]);
+      const epsMomentumLatest = useMemo(() => {
+        const arr = epsMomentumSeries; if (!arr.length) return null;
+        for (let i = arr.length - 1; i >= 0; i--) if (arr[i] != null && Number.isFinite(arr[i])) return arr[i];
+        return null;
+      }, [epsMomentumSeries]);
 
-      const [savedMsg, setSavedMsg] = useState(false);
+      // Phase-4: per-factor invert override (user can flip "higher is better" / "lower is better").
+      const [dirOverrides, setDirOverrides] = useState({});
+      const isInverse = (k) => (k in dirOverrides) ? dirOverrides[k] : (TAA_DIRECTIONS[k] === 'inverse');
+      const toggleDir = (k) => setDirOverrides(prev => ({ ...prev, [k]: !isInverse(k) }));
 
-      const wPct = latest ? Math.round(latest.w * 100) : 50;
-      const gaugeColor = wPct >= 70 ? C.green : wPct <= 30 ? C.red : C.amber;
+      // Compose latest z-score per factor in "raw direction" (signed by economic interpretation, not yet flipped for visual).
+      // Visual rule below: bullish-direction factors (positive intrinsic) → high z renders right=GREEN.
+      // Inverse factors (rsi, fii_fut, eyby, mcap_gdp) → flip sign so visual still works the same way.
+      const i = rich && rich.length ? rich.length - 1 : -1;
+      const factorList = [
+        { k: 'eps_momentum', label: 'EPS Momentum (90d ROC)', rawZ: i >= 0 ? z_eps_momentum[i] : null, rawValue: epsMomentumLatest, suffix: '%', help: 'Derived EPS = Close ÷ P/E. 90-day rate of change z-scored over a 1Y rolling window. Higher = earnings momentum; institutional bullish signal.' },
+        { k: 'rsi',          label: TAA_LABELS.rsi,           rawZ: i >= 0 && sig ? sig.z_rsi[i] : null,        rawValue: rich && i >= 0 ? rich[i].rsi14 : null,             suffix: '',  help: TAA_HELP.rsi },
+        { k: 'fii_fut',      label: TAA_LABELS.fii_fut,       rawZ: i >= 0 && sig ? sig.z_fii[i] : null,        rawValue: latest ? latest.fii : null,                        suffix: '%', help: TAA_HELP.fii_fut },
+        { k: valMode,        label: TAA_LABELS[valMode],      rawZ: i >= 0 && sig ? (valMode === 'erp' ? sig.z_erp[i] : sig.z_eyby[i]) : null, rawValue: latest ? (valMode === 'erp' ? latest.erp : (rich[i] && rich[i].eyby)) : null, suffix: '%', help: TAA_HELP[valMode] },
+        { k: 'breadth',      label: TAA_LABELS.breadth,       rawZ: i >= 0 && sig ? sig.z_breadth[i] : null,    rawValue: rich && i >= 0 ? rich[i].breadth : null,           suffix: '%', help: TAA_HELP.breadth },
+        { k: 'mcap_gdp',     label: TAA_LABELS.mcap_gdp,      rawZ: i >= 0 && sig ? sig.z_mcap_gdp[i] : null,   rawValue: latest ? latest.mcap : null,                       suffix: '%', help: TAA_HELP.mcap_gdp },
+      ];
 
-      // Effective weight total (only active signals)
-      const effTotal = useMemo(() => Object.values(effWeights).reduce((a, b) => a + b, 0), [effWeights]);
-
+      // Phase-4: TAA Heatmap render — gradient bars + per-factor invert toggle. No gauge, no backtest.
       return (
         <div style={{ marginTop: 24 }}>
-          {/* Unified TAA Control Module */}
           <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24 }}>
-            <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 20, borderBottom: '1px solid ' + C.border, paddingBottom: 12 }}>TAA Control Module</div>
-
-          {/* Row 1: Gauge + Backtest */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }} className="taa-top-grid">
-            {/* Gauge */}
-            <div style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 10, padding: 20 }}>
-              <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Recommended Equity Allocation</div>
-              <div className="mono" style={{ fontSize: 44, fontWeight: 700, color: gaugeColor, lineHeight: 1 }}>{wPct}%</div>
-              <div style={{ marginTop: 12, background: C.grid, height: 12, borderRadius: 6, overflow: 'hidden' }}>
-                <div style={{ width: wPct + '%', height: '100%', background: gaugeColor, transition: 'width 0.3s ease' }} />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.textMut, marginTop: 6 }}>
-                <span>0% (Cash)</span><span>50%</span><span>100% (Equity)</span>
-              </div>
-              {latest && (
-                <div style={{ marginTop: 16, fontSize: 12, color: C.textSec }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                    <div><span style={{ color: C.textMut }}>Composite z: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.cz != null ? latest.cz.toFixed(2) : 'n/a'}</span></div>
-                    <div title={TAA_HELP.fii_fut}><span style={{ color: C.textMut }}>FII Long % ↓: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.fii != null ? latest.fii.toFixed(1) : 'n/a'}</span></div>
-                    <div title={TAA_HELP.mcap_gdp}><span style={{ color: C.textMut }}>MCap/GDP ↓: </span><span className="mono" style={{ color: C.text, fontWeight: 600 }}>{latest.mcap != null ? latest.mcap.toFixed(0) + '%' : 'n/a'}</span></div>
-                  </div>
-                  {/* Phase-2: Momentum (RSI-14 + Breadth) unified bucket — Strong / Neutral / Weak */}
-                  {momentumLatest && (
-                    <div style={{ marginTop: 12, padding: '10px 14px', borderLeft: '3px solid ' + momentumLatest.color, background: 'rgba(255,255,255,0.5)', borderRadius: 4 }} title="Combines RSI-14 + Breadth (% > 200DMA). Both are positive-direction signals: higher z = stronger momentum.">
-                      <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Momentum (RSI-14 + Breadth)</div>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: momentumLatest.color, marginTop: 2 }}>{momentumLatest.label}{momentumLatest.score != null ? <span className="mono" style={{ fontSize: 11, color: C.textMut, fontWeight: 400, marginLeft: 8 }}>(z = {momentumLatest.score.toFixed(2)})</span> : null}</div>
-                    </div>
-                  )}
-                  <div style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.5, fontStyle: 'italic' }}>
-                    Explainer: A standardized score aggregating all active signals. &gt;0 indicates a bullish tilt (overweight equities), &lt;0 indicates a bearish tilt (underweight/cash tilt). Arrows ↓ next to FII Long % and MCap/GDP indicate inverse signals — lower values are bullish.
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Backtest */}
-            <div style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 10, padding: 20 }}>
-              <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Backtest Results (Monthly Rebalance)</div>
-              {backtest ? (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
-                  <div>
-                    <div style={{ fontSize: 11, color: C.textMut }}>Metric</div>
-                    <div style={{ fontSize: 13, marginTop: 8, color: C.textSec }}>CAGR</div>
-                    <div style={{ fontSize: 13, marginTop: 8, color: C.textSec }}>Max Drawdown</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: C.cyan, fontWeight: 600 }}>TAA Portfolio</div>
-                    <div className="mono" style={{ fontSize: 14, marginTop: 8, color: C.text, fontWeight: 600 }}>{(backtest.cagrTaa * 100).toFixed(2)}%</div>
-                    <div className="mono" style={{ fontSize: 14, marginTop: 8, color: C.red, fontWeight: 600 }}>{(backtest.mddTaa * 100).toFixed(1)}%</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>Passive Nifty 50</div>
-                    <div className="mono" style={{ fontSize: 14, marginTop: 8, color: C.text }}>{(backtest.cagrBench * 100).toFixed(2)}%</div>
-                    <div className="mono" style={{ fontSize: 14, marginTop: 8, color: C.red }}>{(backtest.mddBench * 100).toFixed(1)}%</div>
-                  </div>
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: C.textMut }}>Insufficient history.</div>
-              )}
-              <div style={{ fontSize: 11, color: C.textMut, marginTop: 16, lineHeight: 1.5 }}>
-                Walk-forward sim: monthly rebalance, 5 bps one-way txn cost, cash sleeve earns 6.5% p.a. Signals lagged 1 day to prevent lookahead. Research tool; not investment advice.
-              </div>
-              <div style={{ fontSize: 11, color: C.textMut, marginTop: 8, lineHeight: 1.5, fontStyle: 'italic' }}>
-                Explainer: Simulated historical performance of this exact configuration vs. a passive Nifty 50 strategy, assuming monthly rebalancing and 5bps transaction costs.
-              </div>
-            </div>
-          </div>
-
-          {/* Signal Weight Configuration */}
-          <div style={{ marginTop: 20, borderTop: '1px solid ' + C.border, paddingTop: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid ' + C.border, paddingBottom: 14, marginBottom: 18 }}>
               <div>
-                <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Signal Weight Configuration</div>
-                <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>
-                  Tune each signal's contribution to the composite z-score.
-                  <span className="mono" style={{ marginLeft: 8, fontWeight: 600, color: effTotal > 0.999 ? C.green : C.amber }}>
-                    Active Total: {(effTotal * 100).toFixed(0)}%
-                  </span>
-                </div>
+                <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Signal Heatmap</div>
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>Each factor's current z-score on a Red→Green spectrum. Toggle direction per factor to invert the visual mapping.</div>
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button onClick={() => { setWeights(TAA_DEFAULT_WEIGHTS); setValMode('erp'); setSavedMsg(false); }}
-                  style={{ background: 'transparent', border: '1px solid ' + C.border, color: C.textSec, borderRadius: 6, padding: '6px 12px', fontSize: 12, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                  Reset defaults
-                </button>
-                <button onClick={() => {
-                    try {
-                      localStorage.setItem('taa_weights', JSON.stringify(weights));
-                      localStorage.setItem('taa_slope', JSON.stringify(slope));
-                      localStorage.setItem('taa_val_mode', valMode);
-                    } catch(e) {}
-                    setSavedMsg(true); setTimeout(() => setSavedMsg(false), 2000);
-                  }}
-                  style={{ background: savedMsg ? C.green : C.cyan, border: 'none', color: '#fff', borderRadius: 6, padding: '6px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', transition: 'background 0.2s' }}>
-                  {savedMsg ? '\u2713 Saved!' : 'Save Configuration'}
-                </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8 }}>
+                <span style={{ fontSize: 11, color: C.textMut, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Valuation:</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: valMode === 'erp' ? C.green : C.textMut, cursor: 'pointer', fontWeight: valMode === 'erp' ? 600 : 400 }}>
+                  <input type="radio" name="valMode" value="erp" checked={valMode === 'erp'} onChange={() => setValMode('erp')} style={{ accentColor: C.green }} />
+                  ERP
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: valMode === 'eyby' ? C.amber : C.textMut, cursor: 'pointer', fontWeight: valMode === 'eyby' ? 600 : 400 }}>
+                  <input type="radio" name="valMode" value="eyby" checked={valMode === 'eyby'} onChange={() => setValMode('eyby')} style={{ accentColor: C.amber }} />
+                  EYBY
+                </label>
               </div>
             </div>
 
-            {/* ERP / EYBY Toggle */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, padding: '10px 14px', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8 }}>
-              <span style={{ fontSize: 12, color: C.textMut, fontWeight: 600 }}>Valuation Anchor:</span>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: valMode === 'erp' ? C.green : C.textMut, cursor: 'pointer', fontWeight: valMode === 'erp' ? 600 : 400 }}>
-                <input type="radio" name="valMode" value="erp" checked={valMode === 'erp'}
-                  onChange={() => { setValMode('erp'); setSavedMsg(false); }}
-                  style={{ accentColor: C.green }} />
-                Equity Risk Premium
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: valMode === 'eyby' ? C.amber : C.textMut, cursor: 'pointer', fontWeight: valMode === 'eyby' ? 600 : 400 }}>
-                <input type="radio" name="valMode" value="eyby" checked={valMode === 'eyby'}
-                  onChange={() => { setValMode('eyby'); setSavedMsg(false); }}
-                  style={{ accentColor: C.amber }} />
-                EYBY Spread
-              </label>
-            </div>
-
-            {/* Sliders — hide inactive valuation signal */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
-              {Object.keys(TAA_DEFAULT_WEIGHTS).filter(k => {
-                if (k === 'erp' && valMode !== 'erp') return false;
-                if (k === 'eyby' && valMode !== 'eyby') return false;
-                return true;
-              }).map(k => {
-                const activeKeys = Object.keys(TAA_DEFAULT_WEIGHTS).filter(kk => {
-                  if (kk === 'erp' && valMode !== 'erp') return false;
-                  if (kk === 'eyby' && valMode !== 'eyby') return false;
-                  return true;
-                });
-                const sumOthers = activeKeys.filter(kk => kk !== k).reduce((a, kk) => a + weights[kk], 0);
-                const maxForK = Math.max(0, +(1.0 - sumOthers).toFixed(2));
-                return (
-                <div key={k} title={TAA_HELP[k] || ''}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.textSec, marginBottom: 4 }}>
-                    <span>{TAA_LABELS[k]} <span style={{ fontSize: 10, color: TAA_DIRECTIONS[k] === 'inverse' ? '#dc2626' : '#16a34a', fontWeight: 700, marginLeft: 4 }}>{TAA_DIRECTIONS[k] === 'inverse' ? '↓ bull' : '↑ bull'}</span>{MOMENTUM_KEYS.includes(k) ? <span style={{ fontSize: 10, color: C.textMut, marginLeft: 4 }}>· Momentum</span> : null}</span>
-                    <span className="mono" style={{ color: C.text, fontWeight: 600 }}>{(weights[k] * 100).toFixed(0) + '%'}</span>
+            {factorList.map(f => {
+              const inv = isInverse(f.k);
+              const z = (f.rawZ != null && Number.isFinite(+f.rawZ)) ? +f.rawZ : null;
+              const intrinsicInverse = (TAA_DIRECTIONS[f.k] === 'inverse');
+              const flip = inv !== intrinsicInverse ? -1 : 1;
+              const effZ = z != null ? (intrinsicInverse ? -z : z) * flip : null;
+              const pos = effZ != null ? Math.max(0, Math.min(100, 50 + effZ * 25)) : 50;
+              const valStr = (f.rawValue != null && Number.isFinite(+f.rawValue))
+                ? ((f.rawValue > 0 && (f.suffix === '%') ? '+' : '') + (+f.rawValue).toFixed(f.suffix === '%' ? 2 : 1) + (f.suffix || ''))
+                : 'n/a';
+              return (
+                <div key={f.k} style={{ marginBottom: 16 }} title={f.help || ''}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 12, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, color: C.textSec, fontWeight: 500 }}>
+                      {f.label}
+                      <span className="mono" style={{ marginLeft: 8, fontSize: 11, color: C.textMut }}>({valStr})</span>
+                    </span>
+                    <button onClick={() => toggleDir(f.k)}
+                      style={{ fontSize: 10, padding: '3px 10px', border: '1px solid ' + C.border, background: 'transparent', borderRadius: 999, cursor: 'pointer', color: C.textMut, fontFamily: 'Inter, sans-serif', fontWeight: 600 }}>
+                      {inv ? '↓ Lower is Better' : '↑ Higher is Better'}
+                    </button>
                   </div>
-                  <input type="range" min="0" max={maxForK} step="0.01" value={weights[k]}
-                    onChange={e => {
-                      const desired = +e.target.value;
-                      const capped = Math.min(desired, maxForK);
-                      setWeights(prev => ({ ...prev, [k]: +capped.toFixed(2) }));
-                      setSavedMsg(false);
-                    }}
-                    style={{ width: '100%', cursor: 'pointer' }} />
+                  <div style={{ position: 'relative', height: 12, background: 'linear-gradient(90deg, #dc2626 0%, #fde68a 50%, #16a34a 100%)', borderRadius: 6, opacity: z != null ? 1 : 0.4 }}>
+                    {z != null && (
+                      <div style={{ position: 'absolute', left: pos + '%', top: -3, width: 3, height: 18, background: '#1e293b', transform: 'translateX(-50%)', borderRadius: 1, boxShadow: '0 1px 3px rgba(0,0,0,0.35)' }} />
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: C.textMut, marginTop: 4 }}>
+                    <span>Bearish</span>
+                    <span className="mono" style={{ color: C.textSec }}>{z != null ? z.toFixed(2) + 'σ' : 'insufficient history'}</span>
+                    <span>Bullish</span>
+                  </div>
                 </div>
-                );
-              })}
-            </div>
-            <div style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.5, fontStyle: 'italic' }}>
-              Explainer: Dictates the relative importance of each metric in calculating the final Composite Z-Score. Adjusting these directly shifts the Recommended Equity Allocation.
-            </div>
+              );
+            })}
 
-            {/* Map slope */}
-            <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ fontSize: 12, color: C.textSec }}>Map slope (sensitivity):</span>
-              <input type="range" min="0.10" max="0.50" step="0.01" value={slope}
-                onChange={e => setSlope(+e.target.value)}
-                style={{ flex: 1, maxWidth: 240 }} />
-              <span className="mono" style={{ fontSize: 12, color: C.text, fontWeight: 600, minWidth: 42, textAlign: 'right' }}>{slope.toFixed(2)}</span>
-            </div>
-            <div style={{ fontSize: 11, color: C.textMut, marginTop: 8, lineHeight: 1.5, fontStyle: 'italic', maxWidth: 600 }}>
-              Explainer: Determines how aggressively the model scales equity weight based on the composite Z-score. A higher slope means faster, more aggressive shifts between 0% and 100% equity exposure.
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 6, lineHeight: 1.6, fontStyle: 'italic', borderTop: '1px solid ' + C.border, paddingTop: 14 }}>
+              Each bar reflects the latest z-score versus its rolling history (RSI/Breadth: 126d · ERP/EYBY: 252d · FII/MCap-GDP: 756d · EPS Momentum: 252d). EPS Momentum is derived from Close ÷ P/E and z-scored on its 90-day rate of change. Use the per-factor toggle to invert the color mapping when your house view treats the factor's direction differently.
             </div>
           </div>
-          </div>{/* end unified TAA Control Module */}
         </div>
       );
     }
@@ -1041,6 +976,56 @@
         bvps: (r[5] == null) ? null : +r[5],
         earningsYield: (r[6] == null) ? null : +r[6],
       }));
+    }
+
+    // Phase-4: Global Macro Hub — replaces the Phase-3 sticky ribbon with 3 dedicated historical charts.
+    function GlobalMacroHub({ macroHistory }) {
+      if (!macroHistory) {
+        return (<div style={{ padding: '60px 24px', textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading global macro history…</div>);
+      }
+      const charts = [
+        { key: 'dxy',   title: 'DXY — 12M Rate of Change',    dataKey: 'roc12m', suffix: '%', color: C.cyan,
+          data: (macroHistory.dxy || []).filter(d => d && d.roc12m != null),
+          note: 'Measures Dollar liquidity. A rising DXY signals tightening global financial conditions and risk-off sentiment for Emerging Markets.' },
+        { key: 'jpy',   title: 'USD/JPY — 12M Rate of Change', dataKey: 'roc12m', suffix: '%', color: C.amber,
+          data: (macroHistory.usdjpy || []).filter(d => d && d.roc12m != null),
+          note: 'Tracks Yen Carry Trade dynamics. A rapidly strengthening Yen (negative ROC) flags global carry trade unwinds and institutional de-risking.' },
+        { key: 'curve', title: 'US 10Y-2Y Yield Curve Spread', dataKey: 'value',  suffix: '%', color: C.purple,
+          data: (macroHistory.yieldCurve || []).filter(d => d && d.value != null),
+          note: 'Leading macro indicator. Inversion (negative) signals recession risk; steepening (positive) signals economic reflation or late-cycle dynamics.' },
+      ];
+      return (
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>Global Macro Hub</h2>
+          <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 24px' }}>10-year history of the three institutional macro signals.</p>
+          {charts.map(c => (
+            <div key={c.key} style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>{c.title}</h3>
+                <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: c.color }}>
+                  {c.data.length > 0 ? (c.data[c.data.length-1][c.dataKey] > 0 ? '+' : '') + (+c.data[c.data.length-1][c.dataKey]).toFixed(2) + c.suffix : 'n/a'}
+                </span>
+              </div>
+              <ResponsiveContainer width="100%" height={300}>
+                <ComposedChart data={c.data} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                  <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(c.data.length / 10))} stroke={C.grid} />
+                  <YAxis tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + c.suffix} />
+                  <Tooltip content={<Tip fields={[{ key: c.dataKey, label: c.title.split(' — ')[0], color: c.color, suffix: c.suffix }]} />} />
+                  <ReferenceLine y={0} stroke={C.textMut} strokeWidth={1} />
+                  <Line type="monotone" dataKey={c.dataKey} stroke={c.color} strokeWidth={2} dot={false} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <div style={{ marginTop: 14, padding: '12px 16px', background: 'rgba(148,163,184,0.06)', borderLeft: '3px solid ' + c.color, borderRadius: '0 6px 6px 0' }}>
+                <p style={{ fontSize: 12, lineHeight: 1.6, color: C.textSec, margin: 0 }}>
+                  <span style={{ fontWeight: 700, color: C.text, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Implication: </span>
+                  {c.note}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
     }
 
     function StocksDashboard({ period, setPeriod, customStart, setCustomStart, customStartISO }) {
@@ -1353,15 +1338,14 @@
       // Phase-2: Sector Deep Dives parent tab. Hook MUST live with the other useState calls,
       // BEFORE the `if (loading && data.length === 0) return (...)` guard further down,
       // otherwise React error #310 ("rendered more hooks than during the previous render").
-      const [inDeepDive, setInDeepDive] = useState(false);
-      const [inGlobal, setInGlobal] = useState(false);
-      const [macroRibbon, setMacroRibbon] = useState(null);
+      // Phase-4: dropdown state removed; flat sub-tabs only. macro-ribbon → moved into Global Macro Hub.
       const [gdpFactors, setGdpFactors] = useState(null);
-      // Phase-3: macro-ribbon + gdp-factors fetch — MUST live above the loading-guard early return.
+      const [macroHistory, setMacroHistory] = useState(null);
+      // Phase-3 GDP factors + Phase-4 macro-history fetch — MUST live above the loading-guard early return.
       useEffect(() => {
         const f = () => {
-          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=macro-ribbon').then(r => r.json()).then(setMacroRibbon).catch(() => {});
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=gdp-factors').then(r => r.json()).then(setGdpFactors).catch(() => {});
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=macro-history').then(r => r.json()).then(setMacroHistory).catch(() => {});
         };
         f();
         const t = setInterval(f, 3600 * 1000);
@@ -1664,53 +1648,25 @@
         );
       }
 
-      // Phase-2: Sector Deep Dives — DEEP_DIVE_OPTIONS is a plain const (not a hook), safe here.
-      // (The matching `inDeepDive` useState lives at the top with the other hooks — see ~line 1322.)
-      const DEEP_DIVE_OPTIONS = [
-        { id: 'nifty-pharma',          label: 'Nifty Pharma' },
-        { id: 'nifty-infra',           label: 'Nifty Infrastructure' },
-        { id: 'nifty-commodities',     label: 'Nifty Commodities' },
-        { id: 'nifty-services-sector', label: 'Nifty Services Sector' },
-      ];
-
       const handleCountrySwitch = (country) => {
         setActiveCountry(country);
         const firstIdx = COUNTRY_INDICES[country][0].id;
         handleIndexSwitch(firstIdx);
       };
+      // Phase-4: handleIndexSwitch is now flat — no parent-tab dropdowns to track.
       const handleIndexSwitch = (idx) => {
-        if (idx === 'sector-deep-dives') {
-          setInDeepDive(true); setInGlobal(false);
-          const target = 'nifty-pharma';
-          setActiveIndex(target);
-          setCountdown(300);
-          if (!dataCache[target]) setLoading(true);
-          else if (dataCache[target].length > 0) setLastUpdated(dataCache[target][dataCache[target].length - 1].date);
-          return;
-        }
-        // Phase-3 Global Equities parent — defaults to S&P 500 child
-        if (idx === 'global-equities') {
-          setInGlobal(true); setInDeepDive(false);
-          const target = 'sp500';
-          setActiveIndex(target);
-          setCountdown(300);
-          if (!dataCache[target]) setLoading(true);
-          else if (dataCache[target].length > 0) setLastUpdated(dataCache[target][dataCache[target].length - 1].date);
-          return;
-        }
-        setInDeepDive(false); setInGlobal(false);
         setActiveIndex(idx);
         setCountdown(300);
-        if (!dataCache[idx]) {
+        if (!dataCache[idx] && idx !== 'global-macro-hub') {
           setLoading(true);
-        } else {
+        } else if (dataCache[idx]) {
           const cached = dataCache[idx];
           if (cached.length > 0) setLastUpdated(cached[cached.length - 1].date);
         }
       };
 
-      // (Phase-3 macro-ribbon + gdp-factors useEffect lives at the top of Dashboard with the other hooks
-      // — see the block right after the inDeepDive useState — to satisfy rules-of-hooks.)
+      // Phase-4 Global Macro Hub — convenience flag (renders separate component instead of standard dashboard)
+      const inGlobalMacroHub = (activeCountry === 'global-macro');
 
       const dataStartLabel = (activeIndex === 'nifty50') ? 'Apr 2016' : (activeIndex === 'sp500' || activeIndex === 'nasdaq') ? 'Data pending' : 'Oct 2024';
 
@@ -1811,77 +1767,28 @@
               </button>
             ))}
           </div>
-          {/* Tier 2: Index Selector — horizontally scrollable for sector expansion */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 28, overflowX: 'auto', overflowY: 'hidden', whiteSpace: 'nowrap', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
-            {COUNTRY_INDICES[activeCountry].map(idx => {
-              let isActive;
-              if (idx.id === 'sector-deep-dives') isActive = inDeepDive;
-              else if (idx.id === 'global-equities') isActive = inGlobal;
-              else isActive = (!inDeepDive && !inGlobal && activeIndex === idx.id);
-              return (
-                <button key={idx.id}
-                  className={'index-tab' + (isActive ? ' active' : '')}
-                  onClick={() => handleIndexSwitch(idx.id)}
-                  style={{ flexShrink: 0 }}>
-                  {idx.shortLabel}
-                </button>
-              );
-            })}
+          {/* Phase-4 Tier 2: Flat horizontally-scrollable sub-tabs (no dropdowns). */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 24, overflowX: 'auto', overflowY: 'hidden', whiteSpace: 'nowrap', paddingBottom: 4, WebkitOverflowScrolling: 'touch', scrollbarWidth: 'thin' }}>
+            {COUNTRY_INDICES[activeCountry].map(idx => (
+              <button key={idx.id}
+                className={'index-tab' + (activeIndex === idx.id ? ' active' : '')}
+                onClick={() => handleIndexSwitch(idx.id)}
+                style={{ flexShrink: 0 }}>
+                {idx.shortLabel}
+              </button>
+            ))}
           </div>
 
-          {/* Phase-3: Master Macro Ribbon — sticky color-coded badges below main nav. */}
-          {macroRibbon && (
-            <div style={{ position: 'sticky', top: 0, zIndex: 5, marginBottom: 20, padding: '10px 14px', background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', border: '1px solid ' + C.border, borderRadius: 10, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>Macro Status</span>
-              {[
-                { k: 'dxy',        m: macroRibbon.dxy,        suffix: '%', value: macroRibbon.dxy && macroRibbon.dxy.roc12m != null ? (macroRibbon.dxy.roc12m > 0 ? '+' : '') + macroRibbon.dxy.roc12m.toFixed(2) + '%' : 'n/a',        title: 'Measures Dollar liquidity. Rising DXY signals tightening financial conditions and EM risk-off.' },
-                { k: 'usdjpy',     m: macroRibbon.usdjpy,     suffix: '%', value: macroRibbon.usdjpy && macroRibbon.usdjpy.roc12m != null ? (macroRibbon.usdjpy.roc12m > 0 ? '+' : '') + macroRibbon.usdjpy.roc12m.toFixed(2) + '%' : 'n/a',  title: 'Tracks Yen Carry Trade. Strengthening Yen flags carry trade unwinds and de-risking.' },
-                { k: 'yieldCurve', m: macroRibbon.yieldCurve, suffix: '',  value: macroRibbon.yieldCurve && macroRibbon.yieldCurve.spread != null ? (macroRibbon.yieldCurve.spread > 0 ? '+' : '') + macroRibbon.yieldCurve.spread.toFixed(2) : 'n/a', title: 'Leading macro indicator. Inversion signals recession risk; steepening signals reflation.' },
-              ].map(b => {
-                const sigColor = (b.m && b.m.signal === 'red') ? C.red : (b.m && b.m.signal === 'green') ? C.green : C.amber;
-                const sigBg = (b.m && b.m.signal === 'red') ? 'rgba(220,38,38,0.10)' : (b.m && b.m.signal === 'green') ? 'rgba(22,163,74,0.10)' : 'rgba(217,119,6,0.10)';
-                return (
-                  <div key={b.k} title={b.title} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: sigBg, border: '1px solid ' + sigColor, borderRadius: 999, cursor: 'help' }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: sigColor, flexShrink: 0 }} />
-                    <span style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>{b.m ? b.m.label : b.k}</span>
-                    <span className="mono" style={{ fontSize: 12, color: C.text, fontWeight: 700 }}>{b.value}</span>
-                  </div>
-                );
-              })}
-              <span style={{ fontSize: 10, color: C.textMut, fontStyle: 'italic', marginLeft: 'auto' }}>Hover badges for institutional context.</span>
-            </div>
-          )}
-
-          {/* Sector Deep Dives — instant context swap dropdown (only when parent tab is active) */}
-          {inDeepDive && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, padding: '12px 16px', background: C.card, border: '1px solid ' + C.border, borderRadius: 10 }}>
-              <span style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Sector:</span>
-              <select
-                value={activeIndex}
-                onChange={e => { setInDeepDive(true); setActiveIndex(e.target.value); setCountdown(300); if (!dataCache[e.target.value]) setLoading(true); }}
-                style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '6px 12px', fontSize: 13, color: C.text, fontFamily: 'Inter, sans-serif', fontWeight: 500, cursor: 'pointer', minWidth: 240 }}>
-                {DEEP_DIVE_OPTIONS.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
-              </select>
-              <span style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic' }}>Long-tail sector context — full Capital Markets template.</span>
-            </div>
-          )}
-
-          {/* Phase-3: Global Equities — instant region swap dropdown (only when parent tab is active) */}
-          {inGlobal && (() => {
-            const opt = GLOBAL_OPTIONS.find(o => o.id === activeIndex) || GLOBAL_OPTIONS[0];
+          {/* Phase-4: world-mcap pill on Global tab (header context, not a dropdown). */}
+          {activeCountry === 'global' && !inGlobalMacroHub && (() => {
+            const opt = COUNTRY_INDICES.global.find(o => o.id === activeIndex);
+            if (!opt) return null;
             return (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, padding: '12px 16px', background: C.card, border: '1px solid ' + C.border, borderRadius: 10, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Region:</span>
-                <select
-                  value={activeIndex}
-                  onChange={e => { setInGlobal(true); setActiveIndex(e.target.value); setCountdown(300); if (!dataCache[e.target.value]) setLoading(true); }}
-                  style={{ background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, padding: '6px 12px', fontSize: 13, color: C.text, fontFamily: 'Inter, sans-serif', fontWeight: 500, cursor: 'pointer', minWidth: 240 }}>
-                  {GLOBAL_OPTIONS.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
-                </select>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: 'rgba(8,145,178,0.10)', border: '1px solid ' + C.cyan, borderRadius: 999, fontSize: 11, color: C.cyan, fontWeight: 700 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', background: 'rgba(8,145,178,0.10)', border: '1px solid ' + C.cyan, borderRadius: 999, fontSize: 11, color: C.cyan, fontWeight: 700 }}>
                   {opt.worldMcapPct.toFixed(1)}% of World Market Cap
                 </span>
-                <span style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic' }}>Same template as USA — P/E, P/B, Bond Yield, EYBY, Equity Risk Premium.</span>
+                <span style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic' }}>USA template — P/E, P/B, Bond Yield, EYBY, ERP.</span>
               </div>
             );
           })()}
@@ -1920,6 +1827,8 @@
             </div>
           )}
 
+          {/* Phase-4: Global Macro Hub takes over the entire view; otherwise render the standard dashboard. */}
+          {inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} /> : (<React.Fragment>
           {/* KPI Cards */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
             <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + (filteredStats?.pe || EMPTY_STATS).mean + 'x'} />
@@ -2258,9 +2167,13 @@
             );
           })()}
 
+          </React.Fragment>)}{/* end inGlobalMacroHub conditional */}
+
           {/* Footer */}
           <div style={{ textAlign: 'center', padding: '24px 0', fontSize: 12, color: C.textMut, borderTop: '1px solid ' + C.border, marginTop: 32 }}>
-            Data sourced from NSE India (PE/PB) &amp; Investing.com (10Y G-Sec Yield) &bull; {indexConfig.label} from {dataStartLabel} &bull; {data.length.toLocaleString()} trading days
+            {inGlobalMacroHub
+              ? 'Macro data: Yahoo Finance (DXY, USD/JPY) & FRED (10Y-2Y Spread) · Trailing 12M ROC computed daily.'
+              : <React.Fragment>Data sourced from NSE India (PE/PB) &amp; Investing.com (10Y G-Sec Yield) &bull; {indexConfig.label} from {dataStartLabel} &bull; {data.length.toLocaleString()} trading days</React.Fragment>}
             <br /><span style={{ opacity: 0.7 }}>Tusk Invest Research</span>
           </div>
         </div>
