@@ -420,12 +420,20 @@
         if (vals.length === 0) return [0, 1];
         return [0, +Math.max(...vals).toFixed(0) * 1.1];
       }, [quarterly]);
+      // Phase-5.1: PEG mean + ±1σ/±2σ statistics over the currently filtered/active horizon.
+      const pegStats = useMemo(() => {
+        const vals = merged.map(m => m.peg).filter(v => v != null && isFinite(v));
+        return vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
+      }, [merged]);
       const pegDomain = useMemo(() => {
         const vals = merged.map(m => m.peg).filter(v => v != null && isFinite(v));
         if (vals.length === 0) return [0, 5];
         const mn = Math.min(...vals), mx = Math.max(...vals);
-        return [Math.max(0, +(mn * 0.9).toFixed(2)), +Math.min(5, mx * 1.1).toFixed(2)];
-      }, [merged]);
+        // Expand the axis to include the SD-band range so the ReferenceLines render inside the plot area.
+        const lo = Math.min(mn, pegStats.sd2Lower);
+        const hi = Math.max(mx, pegStats.sd2Upper);
+        return [Math.max(0, +(lo * 0.95).toFixed(2)), +Math.min(5, hi * 1.05).toFixed(2)];
+      }, [merged, pegStats]);
       const tickInt = Math.max(1, Math.floor(merged.length / 8));
       const lastPeg = [...merged].reverse().find(m => m.peg != null);
 
@@ -483,12 +491,19 @@
                 <Tooltip content={<QtipTooltip />} />
                 <Recharts.Bar yAxisId="left" dataKey="ttmEps" fill={C.cyan} fillOpacity={0.65} barSize={14} isAnimationActive={false} label={renderYoYLabel} />
                 <Line yAxisId="right" type="monotone" dataKey="peg" stroke={C.purple} strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
-                <ReferenceLine yAxisId="right" y={1} stroke={C.green} strokeDasharray="4 4" strokeWidth={1} label={{ value: 'PEG=1 (Fair)', fill: C.green, fontSize: 10, position: 'insideTopRight' }} />
+                {/* Phase-5.1: institutional SD bands matching Relative P/E + Global Macro Hub styling. strokeDasharray="3 3". */}
+                <ReferenceLine yAxisId="right" y={pegStats.sd2Upper} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+2σ (' + fmt2(pegStats.sd2Upper) + ')', position: 'insideTopRight',    fill: C.red,    fontSize: 10 }} />
+                <ReferenceLine yAxisId="right" y={pegStats.sd1Upper} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+1σ (' + fmt2(pegStats.sd1Upper) + ')', position: 'insideTopRight',    fill: C.amber,  fontSize: 10 }} />
+                <ReferenceLine yAxisId="right" y={pegStats.mean}     stroke={C.purple} strokeWidth={1.5} strokeDasharray="3 3" label={{ value: 'Mean ('+ fmt2(pegStats.mean)     + ')', position: 'insideTopRight',    fill: C.purple, fontSize: 10 }} />
+                <ReferenceLine yAxisId="right" y={pegStats.sd1Lower} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−1σ (' + fmt2(pegStats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber,  fontSize: 10 }} />
+                <ReferenceLine yAxisId="right" y={pegStats.sd2Lower} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−2σ (' + fmt2(pegStats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red,    fontSize: 10 }} />
+                <ReferenceLine yAxisId="right" y={1} stroke={C.green} strokeDasharray="4 4" strokeWidth={1} label={{ value: 'PEG=1 (Fair)', fill: C.green, fontSize: 10, position: 'insideTopLeft' }} />
               </ComposedChart>
             </ResponsiveContainer>
             <div style={{ display: 'flex', gap: 18, marginTop: 10, fontSize: 11, color: C.textMut, flexWrap: 'wrap' }}>
               <span><span style={{ display:'inline-block', width: 12, height: 12, background: C.cyan, opacity: 0.65, marginRight: 4, verticalAlign:'middle' }}></span>Quarterly TTM EPS = Close ÷ P/E (sampled at quarter-end)</span>
               <span><span style={{ display:'inline-block', width: 16, height: 2, background: C.purple, marginRight: 4, verticalAlign:'middle' }}></span>Daily PEG = P/E ÷ trailing-1Y EPS growth (nullified if growth ≤ 0 or PEG &gt; 5)</span>
+              <span className="mono" style={{ color: C.textMut }}>μ={fmt2(pegStats.mean)} · σ={fmt2(pegStats.sd)}</span>
             </div>
           </ChartCard>
         </div>
