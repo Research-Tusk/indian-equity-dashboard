@@ -28,8 +28,8 @@
     .animate-pulse { animation: pulse 2s ease-in-out infinite; }
     .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
     @media (max-width: 1100px) { .charts-grid { grid-template-columns: 1fr; } }
-    .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
-    @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
+    .kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; }
+    @media (max-width: 1200px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
     @media (max-width: 600px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
     .recharts-cartesian-grid-horizontal line,
     .recharts-cartesian-grid-vertical line { stroke: #e2e8f0; }
@@ -82,6 +82,7 @@
         { id: 'nifty-infra',            label: 'Nifty Infra',           shortLabel: 'Infra' },
         { id: 'nifty-commodities',      label: 'Nifty Commodities',     shortLabel: 'Commodities' },
         { id: 'nifty-services-sector',  label: 'Nifty Services Sector', shortLabel: 'Services' },
+        { id: 'nifty-realty',           label: 'Nifty Realty',          shortLabel: 'Realty' },
       ],
       global: [
         { id: 'sp500',    label: 'S&P 500',    shortLabel: 'S&P 500',    worldMcapPct: 62.0 },
@@ -93,19 +94,23 @@
         { id: 'bovespa',  label: 'Bovespa',    shortLabel: 'BOVESPA',    worldMcapPct: 0.5 },
         { id: 'twse',     label: 'TWSE',       shortLabel: 'TWSE',       worldMcapPct: 1.6 },
       ],
+      'india-macro': [
+        { id: 'india-macro-hub', label: 'India Macro Hub', shortLabel: 'India Macro' },
+      ],
       'global-macro': [
         { id: 'global-macro-hub', label: 'Global Macro Hub', shortLabel: 'Macro Hub' },
       ],
     };
-    const COUNTRY_LABELS = { india: 'India', global: 'Global', 'global-macro': 'Global Macro' };
+    const COUNTRY_LABELS = { india: 'India', global: 'Global', 'india-macro': 'India Macro', 'global-macro': 'Global Macro' };
     // Flat list for backward compat
-    const AVAILABLE_INDICES = [...COUNTRY_INDICES.india, ...COUNTRY_INDICES.global, ...COUNTRY_INDICES['global-macro']];
+    const AVAILABLE_INDICES = [...COUNTRY_INDICES.india, ...COUNTRY_INDICES.global, ...COUNTRY_INDICES['india-macro'], ...COUNTRY_INDICES['global-macro']];
 
     // Phase-4: every sector tab (capital-markets + 9 flat sectors) renders the lean Capital Markets template.
     const SECTOR_INDEX_IDS = new Set([
       'nifty-capital-markets',
       'nifty-fin-service','nifty-energy','nifty-it','nifty-auto','nifty-fmcg',
-      'nifty-pharma','nifty-infra','nifty-commodities','nifty-services-sector'
+      'nifty-pharma','nifty-infra','nifty-commodities','nifty-services-sector',
+      'nifty-realty'
     ]);
     const isSectorIndex = (id) => SECTOR_INDEX_IDS.has(id);
 
@@ -180,6 +185,13 @@
         mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
       },
       'nifty-services-sector': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-realty': {
         fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
         erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
         bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
@@ -325,6 +337,212 @@
       const dt = new Date(d);
       const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
       return m[dt.getMonth()] + " '" + String(dt.getFullYear()).slice(2);
+    }
+
+    // Phase-5: Zero-API derived EPS = Latest Close ÷ Latest P/E.
+    // EPS Growth toggle compares CURRENT EPS to EPS from N years ago and shows %ROC (green/red).
+    const EPS_LOOKBACKS = [
+      { label: '1Y',  td: 252  },
+      { label: '2Y',  td: 504  },
+      { label: '3Y',  td: 756  },
+      { label: '4Y',  td: 1008 },
+      { label: '5Y',  td: 1260 },
+      { label: '7Y',  td: 1764 },
+      { label: '10Y', td: 2520 },
+    ];
+    function deriveEps(row) {
+      // Indian compact rows: row is array [date, pe, pb, by, close, roe] with pe at index 1, close at index 4.
+      // Enriched US/global rows: row is object with .pe and .close.
+      if (!row) return null;
+      let pe, close;
+      if (Array.isArray(row)) { pe = row[1]; close = row[4]; }
+      else { pe = row.pe; close = row.close; }
+      if (pe == null || close == null || pe <= 0 || close <= 0) return null;
+      return close / pe;
+    }
+    // Phase-5: Quarterly TTM EPS sampled at quarter-end + Daily PEG line overlay.
+    // Math guard: clamp PEG = P/E ÷ EPS_growth_1Y; null out if growth ≤ 0 or PEG > 5.
+    function QuarterlyEpsPegChart({ data, indexLabel, period, customStartISO }) {
+      const filtered = useMemo(() => applyPeriodFilter(data || [], period, customStartISO), [data, period, customStartISO]);
+      // Daily EPS series + 1Y trailing growth + clamped PEG, all derived from Close/PE.
+      const dailyDerived = useMemo(() => {
+        const out = [];
+        for (let i = 0; i < filtered.length; i++) {
+          const r = filtered[i];
+          const eps = deriveEps(r);
+          const date = Array.isArray(r) ? r[0] : r.date;
+          const pe = Array.isArray(r) ? r[1] : r.pe;
+          let pegRaw = null, pegPlot = null, growthPct = null;
+          if (eps != null && i >= 252) {
+            const past = deriveEps(filtered[i - 252]);
+            if (past != null && past > 0) {
+              growthPct = ((eps / past) - 1) * 100;
+              if (growthPct > 0 && pe != null && pe > 0) {
+                pegRaw = pe / growthPct;
+                pegPlot = (pegRaw > 5) ? null : +pegRaw.toFixed(2);
+              }
+            }
+          }
+          out.push({ date, eps, pe, peg: pegPlot, pegRaw, growthPct });
+        }
+        return out;
+      }, [filtered]);
+      // Quarter-end sampling: keep one row per (year, quarter) — the last trading day in that quarter.
+      const quarterly = useMemo(() => {
+        const buckets = {};
+        for (const r of dailyDerived) {
+          if (!r.eps) continue;
+          const m = +r.date.slice(5, 7), y = r.date.slice(0, 4);
+          const q = Math.ceil(m / 3); const key = y + 'Q' + q;
+          if (!buckets[key] || buckets[key].date < r.date) buckets[key] = { ...r, qkey: key };
+        }
+        const arr = Object.values(buckets).sort((a, b) => a.date.localeCompare(b.date));
+        // Compute YoY growth (4 quarters back)
+        for (let i = 4; i < arr.length; i++) {
+          const past = arr[i - 4]?.eps;
+          arr[i].yoy = (past && past > 0) ? +(((arr[i].eps / past) - 1) * 100).toFixed(1) : null;
+        }
+        return arr;
+      }, [dailyDerived]);
+      // Merge: quarterly bars on quarter-end date; daily PEG line elsewhere.
+      const merged = useMemo(() => {
+        const qByDate = {};
+        for (const q of quarterly) qByDate[q.date] = q;
+        return dailyDerived.map(r => ({
+          date: r.date,
+          peg: r.peg,
+          ttmEps: qByDate[r.date]?.eps ?? null,
+          yoy: qByDate[r.date]?.yoy ?? null,
+        }));
+      }, [dailyDerived, quarterly]);
+      const epsDomain = useMemo(() => {
+        const vals = quarterly.map(q => q.eps).filter(v => v != null && isFinite(v));
+        if (vals.length === 0) return [0, 1];
+        return [0, +Math.max(...vals).toFixed(0) * 1.1];
+      }, [quarterly]);
+      const pegDomain = useMemo(() => {
+        const vals = merged.map(m => m.peg).filter(v => v != null && isFinite(v));
+        if (vals.length === 0) return [0, 5];
+        const mn = Math.min(...vals), mx = Math.max(...vals);
+        return [Math.max(0, +(mn * 0.9).toFixed(2)), +Math.min(5, mx * 1.1).toFixed(2)];
+      }, [merged]);
+      const tickInt = Math.max(1, Math.floor(merged.length / 8));
+      const lastPeg = [...merged].reverse().find(m => m.peg != null);
+
+      const QtipTooltip = ({ active, payload, label }) => {
+        if (!active || !payload?.length) return null;
+        const eps = payload.find(p => p.dataKey === 'ttmEps');
+        const peg = payload.find(p => p.dataKey === 'peg');
+        const q = quarterly.find(x => x.date === label);
+        return (
+          <div style={{ background: '#fff', border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 14px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)' }}>
+            <div className="mono" style={{ fontSize: 11, color: C.textMut, marginBottom: 6 }}>{label}</div>
+            {eps && eps.value != null && (
+              <>
+                <div style={{ fontSize: 12, color: C.textSec }}>TTM EPS: <span className="mono" style={{ color: C.cyan, fontWeight: 600 }}>{(+eps.value).toFixed(2)}</span></div>
+                {q?.yoy != null && (
+                  <div style={{ fontSize: 11, color: q.yoy >= 0 ? C.green : C.red, fontWeight: 600 }}>YoY: {(q.yoy > 0 ? '+' : '') + q.yoy.toFixed(1)}%</div>
+                )}
+              </>
+            )}
+            {peg && peg.value != null && (
+              <div style={{ fontSize: 12, color: C.textSec, marginTop: 4 }}>PEG: <span className="mono" style={{ color: C.purple, fontWeight: 600 }}>{(+peg.value).toFixed(2)}</span></div>
+            )}
+          </div>
+        );
+      };
+
+      // Custom bar label: YoY%
+      const renderYoYLabel = (props) => {
+        const { x, y, width, value, index } = props;
+        const q = quarterly[index]; if (!q || q.yoy == null) return null;
+        const fill = q.yoy >= 0 ? C.green : C.red;
+        return (
+          <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={fill} fontFamily="JetBrains Mono, monospace">
+            {(q.yoy > 0 ? '+' : '') + q.yoy.toFixed(0) + '%'}
+          </text>
+        );
+      };
+
+      if (quarterly.length === 0) return null;
+      return (
+        <div style={{ marginTop: 24 }}>
+          <ChartCard
+            title={(indexLabel || '') + ' — Quarterly TTM EPS & Daily PEG Ratio'}
+            subtitle="Bars = TTM EPS sampled at quarter-end (YoY label on top) | Line = Daily PEG (P/E ÷ 1Y EPS Growth) clamped at 0–5"
+            badge={lastPeg && lastPeg.peg != null ? 'PEG ' + lastPeg.peg.toFixed(2) : 'PEG —'}
+            badgeColor={C.purple}
+            badgeBg="rgba(124,58,237,0.15)"
+          >
+            <ResponsiveContainer width="100%" height={400}>
+              <ComposedChart data={merged} margin={{ top: 18, right: 50, left: 10, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={tickInt} stroke={C.grid} />
+                <YAxis yAxisId="left" domain={epsDomain} tick={{ fontSize: 11, fill: C.cyan }} stroke={C.cyan} tickFormatter={v => v.toFixed(0)} label={{ value: 'TTM EPS', angle: -90, position: 'insideLeft', fill: C.cyan, fontSize: 11 }} />
+                <YAxis yAxisId="right" orientation="right" domain={pegDomain} tick={{ fontSize: 11, fill: C.purple }} stroke={C.purple} tickFormatter={v => v.toFixed(1) + 'x'} label={{ value: 'PEG', angle: 90, position: 'insideRight', fill: C.purple, fontSize: 11 }} />
+                <Tooltip content={<QtipTooltip />} />
+                <Recharts.Bar yAxisId="left" dataKey="ttmEps" fill={C.cyan} fillOpacity={0.65} barSize={14} isAnimationActive={false} label={renderYoYLabel} />
+                <Line yAxisId="right" type="monotone" dataKey="peg" stroke={C.purple} strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
+                <ReferenceLine yAxisId="right" y={1} stroke={C.green} strokeDasharray="4 4" strokeWidth={1} label={{ value: 'PEG=1 (Fair)', fill: C.green, fontSize: 10, position: 'insideTopRight' }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div style={{ display: 'flex', gap: 18, marginTop: 10, fontSize: 11, color: C.textMut, flexWrap: 'wrap' }}>
+              <span><span style={{ display:'inline-block', width: 12, height: 12, background: C.cyan, opacity: 0.65, marginRight: 4, verticalAlign:'middle' }}></span>Quarterly TTM EPS = Close ÷ P/E (sampled at quarter-end)</span>
+              <span><span style={{ display:'inline-block', width: 16, height: 2, background: C.purple, marginRight: 4, verticalAlign:'middle' }}></span>Daily PEG = P/E ÷ trailing-1Y EPS growth (nullified if growth ≤ 0 or PEG &gt; 5)</span>
+            </div>
+          </ChartCard>
+        </div>
+      );
+    }
+
+    function EpsGrowthCard({ data }) {
+      const [lookback, setLookback] = useState('3Y');
+      const cfg = EPS_LOOKBACKS.find(p => p.label === lookback) || EPS_LOOKBACKS[2];
+      // Walk backwards from the end to find the latest valid EPS, then back N trading days.
+      const result = useMemo(() => {
+        if (!data || data.length === 0) return { current: null, past: null, roc: null, currentDate: null, pastDate: null };
+        let curIdx = -1;
+        for (let i = data.length - 1; i >= 0; i--) { if (deriveEps(data[i]) != null) { curIdx = i; break; } }
+        if (curIdx < 0) return { current: null, past: null, roc: null, currentDate: null, pastDate: null };
+        const targetIdx = curIdx - cfg.td;
+        if (targetIdx < 0) return { current: deriveEps(data[curIdx]), past: null, roc: null, currentDate: (Array.isArray(data[curIdx]) ? data[curIdx][0] : data[curIdx].date), pastDate: null };
+        // Step back until a valid past EPS is found (allow ±10 days drift).
+        let pastIdx = -1;
+        for (let j = targetIdx; j >= Math.max(0, targetIdx - 10) && j < data.length; j--) { if (deriveEps(data[j]) != null) { pastIdx = j; break; } }
+        if (pastIdx < 0) for (let j = targetIdx; j <= Math.min(data.length - 1, targetIdx + 10); j++) { if (deriveEps(data[j]) != null) { pastIdx = j; break; } }
+        const cur = deriveEps(data[curIdx]);
+        const past = pastIdx >= 0 ? deriveEps(data[pastIdx]) : null;
+        const roc = (cur != null && past != null && past > 0) ? ((cur / past) - 1) * 100 : null;
+        return {
+          current: cur, past,
+          roc,
+          currentDate: Array.isArray(data[curIdx]) ? data[curIdx][0] : data[curIdx].date,
+          pastDate: pastIdx >= 0 ? (Array.isArray(data[pastIdx]) ? data[pastIdx][0] : data[pastIdx].date) : null,
+        };
+      }, [data, cfg]);
+      const rocColor = result.roc == null ? C.textMut : result.roc >= 0 ? C.green : C.red;
+      const rocText = result.roc == null ? '—' : (result.roc > 0 ? '+' : '') + result.roc.toFixed(1) + '%';
+      return (
+        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: '16px 20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>EPS Growth ({lookback})</div>
+            <div style={{ display: 'flex', gap: 2 }}>
+              {EPS_LOOKBACKS.map(p => (
+                <button key={p.label} onClick={() => setLookback(p.label)}
+                  style={{ background: lookback === p.label ? C.text : 'transparent', border: '1px solid ' + (lookback === p.label ? C.text : C.border), color: lookback === p.label ? '#fff' : C.textMut, borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mono" style={{ fontSize: 26, fontWeight: 700, color: rocColor, marginTop: 4 }}>{rocText}</div>
+          <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, lineHeight: 1.4 }}>
+            EPS now: <span className="mono" style={{ color: C.textSec }}>{result.current != null ? result.current.toFixed(2) : '—'}</span>
+            {' '}vs <span className="mono" style={{ color: C.textSec }}>{result.past != null ? result.past.toFixed(2) : '—'}</span>
+            {result.pastDate ? <span style={{ opacity: 0.7 }}> ({result.pastDate.slice(0,7)})</span> : null}
+          </div>
+        </div>
+      );
     }
 
     function StatCard({ label, value, suffix, color, subtext }) {
@@ -878,84 +1096,85 @@
         return null;
       }, [epsMomentumSeries]);
 
-      // Phase-4: per-factor invert override (user can flip "higher is better" / "lower is better").
-      const [dirOverrides, setDirOverrides] = useState({});
-      const isInverse = (k) => (k in dirOverrides) ? dirOverrides[k] : (TAA_DIRECTIONS[k] === 'inverse');
-      const toggleDir = (k) => setDirOverrides(prev => ({ ...prev, [k]: !isInverse(k) }));
-
-      // Compose latest z-score per factor in "raw direction" (signed by economic interpretation, not yet flipped for visual).
-      // Visual rule below: bullish-direction factors (positive intrinsic) → high z renders right=GREEN.
-      // Inverse factors (rsi, fii_fut, eyby, mcap_gdp) → flip sign so visual still works the same way.
+      // Phase-5: Direction toggles REMOVED. Color polarity is hard-coded by economic semantics:
+      //   High EYBY/ERP → Green (cheap)   ;   High P/E, P/B, MCap/GDP → Red (expensive)
+      //   High RSI → Red (overbought)     ;   High FII Fut → Red (crowded)   ;   High Breadth → Green
       const i = rich && rich.length ? rich.length - 1 : -1;
-      const factorList = [
-        { k: 'eps_momentum', label: 'EPS Momentum (90d ROC)', rawZ: i >= 0 ? z_eps_momentum[i] : null, rawValue: epsMomentumLatest, suffix: '%', help: 'Derived EPS = Close ÷ P/E. 90-day rate of change z-scored over a 1Y rolling window. Higher = earnings momentum; institutional bullish signal.' },
-        { k: 'rsi',          label: TAA_LABELS.rsi,           rawZ: i >= 0 && sig ? sig.z_rsi[i] : null,        rawValue: rich && i >= 0 ? rich[i].rsi14 : null,             suffix: '',  help: TAA_HELP.rsi },
-        { k: 'fii_fut',      label: TAA_LABELS.fii_fut,       rawZ: i >= 0 && sig ? sig.z_fii[i] : null,        rawValue: latest ? latest.fii : null,                        suffix: '%', help: TAA_HELP.fii_fut },
-        { k: valMode,        label: TAA_LABELS[valMode],      rawZ: i >= 0 && sig ? (valMode === 'erp' ? sig.z_erp[i] : sig.z_eyby[i]) : null, rawValue: latest ? (valMode === 'erp' ? latest.erp : (rich[i] && rich[i].eyby)) : null, suffix: '%', help: TAA_HELP[valMode] },
-        { k: 'breadth',      label: TAA_LABELS.breadth,       rawZ: i >= 0 && sig ? sig.z_breadth[i] : null,    rawValue: rich && i >= 0 ? rich[i].breadth : null,           suffix: '%', help: TAA_HELP.breadth },
-        { k: 'mcap_gdp',     label: TAA_LABELS.mcap_gdp,      rawZ: i >= 0 && sig ? sig.z_mcap_gdp[i] : null,   rawValue: latest ? latest.mcap : null,                       suffix: '%', help: TAA_HELP.mcap_gdp },
-      ];
+      const peLatest = (rich && i >= 0) ? rich[i].pe : null;
+      const pbLatest = (rich && i >= 0) ? rich[i].pb : null;
+      // Derive PE/PB z-scores on the fly (rolling 252d) so they can join the heatmap directly.
+      const peSeries = useMemo(() => (rich || []).map(d => d?.pe), [rich]);
+      const pbSeries = useMemo(() => (rich || []).map(d => d?.pb), [rich]);
+      const z_pe = useMemo(() => rollingZ(peSeries, 252), [peSeries]);
+      const z_pb = useMemo(() => rollingZ(pbSeries, 252), [pbSeries]);
 
-      // Phase-4: TAA Heatmap render — gradient bars + per-factor invert toggle. No gauge, no backtest.
+      // Block A — Fundamental Attractiveness (5 factors, polarity hard-coded).
+      // bullishHigh=true → high z renders Green; false → high z renders Red.
+      const fundamentalFactors = [
+        { k: 'eyby',     label: 'EYBY (Earnings Yield ÷ Bond Yield)', rawZ: i >= 0 && sig ? sig.z_eyby[i] : null,                    rawValue: rich && i >= 0 ? rich[i].eyby : null, suffix: '%', bullishHigh: true,  help: 'Higher = equities cheap relative to bonds → Bullish.' },
+        { k: 'erp',      label: 'Equity Risk Premium',                rawZ: i >= 0 && sig ? sig.z_erp[i] : null,                     rawValue: latest ? latest.erp : null,            suffix: '%', bullishHigh: true,  help: 'Higher = equities cheap vs. risk-free rate → Bullish.' },
+        { k: 'pe',       label: 'P/E Ratio',                          rawZ: i >= 0 ? z_pe[i] : null,                                 rawValue: peLatest,                              suffix: 'x', bullishHigh: false, help: 'Higher = expensive earnings → Bearish.' },
+        { k: 'pb',       label: 'P/B Ratio',                          rawZ: i >= 0 ? z_pb[i] : null,                                 rawValue: pbLatest,                              suffix: 'x', bullishHigh: false, help: 'Higher = expensive book value → Bearish.' },
+        { k: 'mcap_gdp', label: 'Market Cap / GDP',                   rawZ: i >= 0 && sig ? sig.z_mcap_gdp[i] : null,                rawValue: latest ? latest.mcap : null,           suffix: '%', bullishHigh: false, help: 'Buffett Indicator. Higher = overvaluation → Bearish.' },
+      ];
+      // Block B — Technical Signals (3 factors).
+      const technicalFactors = [
+        { k: 'rsi',     label: 'RSI-14',                              rawZ: i >= 0 && sig ? sig.z_rsi[i] : null,    rawValue: rich && i >= 0 ? rich[i].rsi14 : null, suffix: '',  bullishHigh: false, help: 'Higher = overbought → Red. Lower = oversold → Green.' },
+        { k: 'fii_fut', label: 'FII Index Fut Net Long',              rawZ: i >= 0 && sig ? sig.z_fii[i] : null,    rawValue: latest ? latest.fii : null,            suffix: '%', bullishHigh: false, help: 'Higher = crowded long / froth → Red.' },
+        { k: 'breadth', label: 'Breadth (% > 200 DMA)',               rawZ: i >= 0 && sig ? sig.z_breadth[i] : null,rawValue: rich && i >= 0 ? rich[i].breadth : null,suffix: '%', bullishHigh: true,  help: 'Higher = broad participation → Green.' },
+      ];
+      // sig variable retained but signMode/dir-toggle UI removed; valMode (ERP vs EYBY) state kept for module-internal use.
+      // The eslint warnings for unused `latest`, `weights`, `setWeights`, `slope`, `setSlope`, `effWeights`, `weightSeries`, `backtest` are intentional —
+      // the broader TAA backtest framework is still wired so future restoration of weighted gauge UI is one-line away.
+
+      function FactorBar({ f }) {
+        const z = (f.rawZ != null && Number.isFinite(+f.rawZ)) ? +f.rawZ : null;
+        // Map z-score → marker position (0=Bearish, 100=Bullish). bullishHigh:false flips the axis.
+        const effZ = z != null ? (f.bullishHigh ? z : -z) : null;
+        const pos = effZ != null ? Math.max(0, Math.min(100, 50 + effZ * 25)) : 50;
+        const valStr = (f.rawValue != null && Number.isFinite(+f.rawValue))
+          ? ((+f.rawValue).toFixed(f.suffix === 'x' ? 2 : f.suffix === '%' ? 2 : 1) + (f.suffix || ''))
+          : 'n/a';
+        return (
+          <div style={{ marginBottom: 14 }} title={f.help || ''}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, color: C.textSec, fontWeight: 500 }}>
+                {f.label}
+                <span className="mono" style={{ marginLeft: 8, fontSize: 11, color: C.textMut }}>({valStr})</span>
+              </span>
+              <span className="mono" style={{ fontSize: 11, color: C.textMut }}>{z != null ? z.toFixed(2) + 'σ' : '—'}</span>
+            </div>
+            <div style={{ position: 'relative', height: 12, background: 'linear-gradient(90deg, #dc2626 0%, #fde68a 50%, #16a34a 100%)', borderRadius: 6, opacity: z != null ? 1 : 0.4 }}>
+              {z != null && (
+                <div style={{ position: 'absolute', left: pos + '%', top: -3, width: 3, height: 18, background: '#1e293b', transform: 'translateX(-50%)', borderRadius: 1, boxShadow: '0 1px 3px rgba(0,0,0,0.35)' }} />
+              )}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: C.textMut, marginTop: 4 }}>
+              <span>Bearish</span><span>Neutral</span><span>Bullish</span>
+            </div>
+          </div>
+        );
+      }
+
       return (
         <div style={{ marginTop: 24 }}>
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid ' + C.border, paddingBottom: 14, marginBottom: 18 }}>
-              <div>
-                <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Signal Heatmap</div>
-                <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>Each factor's current z-score on a Red→Green spectrum. Toggle direction per factor to invert the visual mapping.</div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8 }}>
-                <span style={{ fontSize: 11, color: C.textMut, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Valuation:</span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: valMode === 'erp' ? C.green : C.textMut, cursor: 'pointer', fontWeight: valMode === 'erp' ? 600 : 400 }}>
-                  <input type="radio" name="valMode" value="erp" checked={valMode === 'erp'} onChange={() => setValMode('erp')} style={{ accentColor: C.green }} />
-                  ERP
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: valMode === 'eyby' ? C.amber : C.textMut, cursor: 'pointer', fontWeight: valMode === 'eyby' ? 600 : 400 }}>
-                  <input type="radio" name="valMode" value="eyby" checked={valMode === 'eyby'} onChange={() => setValMode('eyby')} style={{ accentColor: C.amber }} />
-                  EYBY
-                </label>
-              </div>
+          {/* Block A — Fundamental Attractiveness */}
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 16 }}>
+            <div style={{ borderBottom: '1px solid ' + C.border, paddingBottom: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>A. Fundamental Attractiveness</div>
+              <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>These indicators and a view on forward earnings will determine medium-term positioning.</div>
             </div>
-
-            {factorList.map(f => {
-              const inv = isInverse(f.k);
-              const z = (f.rawZ != null && Number.isFinite(+f.rawZ)) ? +f.rawZ : null;
-              const intrinsicInverse = (TAA_DIRECTIONS[f.k] === 'inverse');
-              const flip = inv !== intrinsicInverse ? -1 : 1;
-              const effZ = z != null ? (intrinsicInverse ? -z : z) * flip : null;
-              const pos = effZ != null ? Math.max(0, Math.min(100, 50 + effZ * 25)) : 50;
-              const valStr = (f.rawValue != null && Number.isFinite(+f.rawValue))
-                ? ((f.rawValue > 0 && (f.suffix === '%') ? '+' : '') + (+f.rawValue).toFixed(f.suffix === '%' ? 2 : 1) + (f.suffix || ''))
-                : 'n/a';
-              return (
-                <div key={f.k} style={{ marginBottom: 16 }} title={f.help || ''}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 12, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13, color: C.textSec, fontWeight: 500 }}>
-                      {f.label}
-                      <span className="mono" style={{ marginLeft: 8, fontSize: 11, color: C.textMut }}>({valStr})</span>
-                    </span>
-                    <button onClick={() => toggleDir(f.k)}
-                      style={{ fontSize: 10, padding: '3px 10px', border: '1px solid ' + C.border, background: 'transparent', borderRadius: 999, cursor: 'pointer', color: C.textMut, fontFamily: 'Inter, sans-serif', fontWeight: 600 }}>
-                      {inv ? '↓ Lower is Better' : '↑ Higher is Better'}
-                    </button>
-                  </div>
-                  <div style={{ position: 'relative', height: 12, background: 'linear-gradient(90deg, #dc2626 0%, #fde68a 50%, #16a34a 100%)', borderRadius: 6, opacity: z != null ? 1 : 0.4 }}>
-                    {z != null && (
-                      <div style={{ position: 'absolute', left: pos + '%', top: -3, width: 3, height: 18, background: '#1e293b', transform: 'translateX(-50%)', borderRadius: 1, boxShadow: '0 1px 3px rgba(0,0,0,0.35)' }} />
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: C.textMut, marginTop: 4 }}>
-                    <span>Bearish</span>
-                    <span className="mono" style={{ color: C.textSec }}>{z != null ? z.toFixed(2) + 'σ' : 'insufficient history'}</span>
-                    <span>Bullish</span>
-                  </div>
-                </div>
-              );
-            })}
-
-            <div style={{ fontSize: 11, color: C.textMut, marginTop: 6, lineHeight: 1.6, fontStyle: 'italic', borderTop: '1px solid ' + C.border, paddingTop: 14 }}>
-              Each bar reflects the latest z-score versus its rolling history (RSI/Breadth: 126d · ERP/EYBY: 252d · FII/MCap-GDP: 756d · EPS Momentum: 252d). EPS Momentum is derived from Close ÷ P/E and z-scored on its 90-day rate of change. Use the per-factor toggle to invert the color mapping when your house view treats the factor's direction differently.
+            {fundamentalFactors.map(f => <FactorBar key={f.k} f={f} />)}
+          </div>
+          {/* Block B — Technical Signals */}
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24 }}>
+            <div style={{ borderBottom: '1px solid ' + C.border, paddingBottom: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>B. Technical Signals</div>
+              <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>If technicals are weak but fundamentals are getting attractive, there is a strong case for scaling into investments.</div>
+            </div>
+            {technicalFactors.map(f => <FactorBar key={f.k} f={f} />)}
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.5, fontStyle: 'italic', borderTop: '1px solid ' + C.border, paddingTop: 12 }}>
+              Z-scores are rolling: RSI/Breadth on 126d · ERP/EYBY/PE/PB on 252d · FII Fut/MCap-GDP on 756d. Color polarity is hard-coded by economic interpretation — no toggles.
             </div>
           </div>
         </div>
@@ -976,6 +1195,77 @@
         bvps: (r[5] == null) ? null : +r[5],
         earningsYield: (r[6] == null) ? null : +r[6],
       }));
+    }
+
+    // Phase-5: India Macro Hub — maps the dual GDP equation:
+    //   GVA (Agri + Industry + Services) = GDP = Expenditure (C + I + G + Net Exports)
+    // Backed by /functions/v1/nse-data-proxy?mode=india-macro (FRED + Yahoo proxies).
+    function IndiaMacroHub({ indiaMacro }) {
+      if (!indiaMacro) {
+        return (<div style={{ padding: '60px 24px', textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading India macro data…</div>);
+      }
+      const fmtPct = v => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+      const fmtVal = v => v == null ? '—' : (+v).toFixed(2);
+      const tone = v => v == null ? C.textMut : v >= 0 ? C.green : C.red;
+      const Cell = ({ label, sub, val, yoy, color }) => (
+        <div style={{ padding: 16, borderRadius: 10, background: '#fff', border: '1px solid ' + C.border, minHeight: 96 }}>
+          <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{label}</div>
+          <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: color || C.text, marginTop: 4 }}>{fmtPct(yoy)}</div>
+          <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Latest: <span className="mono">{fmtVal(val)}</span></div>
+          {sub && <div style={{ fontSize: 10, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>{sub}</div>}
+        </div>
+      );
+      const gva = indiaMacro.gva || {};
+      const exp = indiaMacro.expenditure || {};
+      const mon = indiaMacro.monetary || {};
+      return (
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>India Macro Hub</h2>
+          <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 24px' }}>
+            <span className="mono" style={{ color: C.textSec, fontWeight: 600 }}>GVA (Agri + Industry + Services) = GDP = Expenditure (C + I + G + Net Exports)</span>
+            <br />Auto-updating proxies sourced from FRED &amp; Yahoo. Cells show YoY change with absolute reading.
+          </p>
+
+          {/* Block 1: GVA — Production-side decomposition */}
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+              GVA — Gross Value Added (Production Side)
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+              <Cell label="Agriculture" sub={gva.agri?.source} val={gva.agri?.latest} yoy={gva.agri?.yoy} color={tone(gva.agri?.yoy)} />
+              <Cell label="Industry (IIP YoY)" sub={gva.industry?.source} val={gva.industry?.latest} yoy={gva.industry?.yoy} color={tone(gva.industry?.yoy)} />
+              <Cell label="Services" sub={gva.services?.source} val={gva.services?.latest} yoy={gva.services?.yoy} color={tone(gva.services?.yoy)} />
+            </div>
+          </div>
+
+          {/* Block 2: GDP-Expenditure — Demand-side decomposition */}
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+              GDP — Expenditure Method (Demand Side)
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+              <Cell label="C — Consumption" sub={exp.C?.source} val={exp.C?.latest} yoy={exp.C?.yoy} color={tone(exp.C?.yoy)} />
+              <Cell label="I — Investment" sub={exp.I?.source} val={exp.I?.latest} yoy={exp.I?.yoy} color={tone(exp.I?.yoy)} />
+              <Cell label="G — Govt Spending" sub={exp.G?.source} val={exp.G?.latest} yoy={exp.G?.yoy} color={tone(exp.G?.yoy)} />
+              <Cell label="X-M — Net Exports" sub={exp.NX?.source} val={exp.NX?.latest} yoy={exp.NX?.yoy} color={tone(exp.NX?.yoy)} />
+            </div>
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 12, fontStyle: 'italic' }}>
+              G and Net Exports show graceful fallbacks until FRED publishes high-frequency proxies for these series.
+            </div>
+          </div>
+
+          {/* Block 3: Monetary Backdrop */}
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+              Monetary Backdrop
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+              <Cell label="CPI Inflation" sub={mon.cpi?.source} val={mon.cpi?.latest} yoy={mon.cpi?.yoy} color={tone(-(mon.cpi?.yoy ?? 0))} />
+              <Cell label="Short-Term Rate (RBI proxy)" sub={mon.repo?.source} val={mon.repo?.latest} yoy={mon.repo?.yoy} color={tone(-(mon.repo?.yoy ?? 0))} />
+            </div>
+          </div>
+        </div>
+      );
     }
 
     // Phase-4: Global Macro Hub — replaces the Phase-3 sticky ribbon with 3 dedicated historical charts.
@@ -1341,11 +1631,13 @@
       // Phase-4: dropdown state removed; flat sub-tabs only. macro-ribbon → moved into Global Macro Hub.
       const [gdpFactors, setGdpFactors] = useState(null);
       const [macroHistory, setMacroHistory] = useState(null);
-      // Phase-3 GDP factors + Phase-4 macro-history fetch — MUST live above the loading-guard early return.
+      const [indiaMacro, setIndiaMacro] = useState(null);
+      // Phase-3 GDP factors + Phase-4 macro-history + Phase-5 india-macro fetch — MUST live above loading-guard.
       useEffect(() => {
         const f = () => {
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=gdp-factors').then(r => r.json()).then(setGdpFactors).catch(() => {});
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=macro-history').then(r => r.json()).then(setMacroHistory).catch(() => {});
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=india-macro').then(r => r.json()).then(setIndiaMacro).catch(() => {});
         };
         f();
         const t = setInterval(f, 3600 * 1000);
@@ -1358,6 +1650,8 @@
 
       const fetchData = useCallback(async (idx) => {
         const indexToFetch = idx || activeIndex;
+        // Phase-5: macro-hub pseudo-indices have no time-series in daily_eyby_data — skip.
+        if (indexToFetch === 'india-macro-hub' || indexToFetch === 'global-macro-hub') { setLoading(false); return; }
         setLoading(true);
         try {
           const resp = await fetch(BASE_URL + '&index=' + indexToFetch + '&t=' + Date.now(), { cache: 'no-store' });
@@ -1640,7 +1934,9 @@
 
       const ratioTickInterval = Math.max(1, Math.floor(ratioChartData.length / 8));
 
-      if (loading && data.length === 0) {
+      // Phase-5: skip the loading guard for the macro-hub pseudo-tabs (they don't pull from daily_eyby_data).
+      const isMacroHubTab = (activeCountry === 'india-macro' || activeCountry === 'global-macro');
+      if (loading && data.length === 0 && !isMacroHubTab) {
         return (
           <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto', textAlign: 'center', paddingTop: 120 }}>
             <div style={{ fontSize: 18, color: C.textMut }}>Loading dashboard data...</div>
@@ -1665,8 +1961,9 @@
         }
       };
 
-      // Phase-4 Global Macro Hub — convenience flag (renders separate component instead of standard dashboard)
+      // Phase-4 Global Macro Hub & Phase-5 India Macro Hub — convenience flags.
       const inGlobalMacroHub = (activeCountry === 'global-macro');
+      const inIndiaMacroHub  = (activeCountry === 'india-macro');
 
       const dataStartLabel = (activeIndex === 'nifty50') ? 'Apr 2016' : (activeIndex === 'sp500' || activeIndex === 'nasdaq') ? 'Data pending' : 'Oct 2024';
 
@@ -1793,43 +2090,11 @@
             );
           })()}
 
-          {/* Phase-3: GDP Factor Matrix — invisible-math card surfacing the leading GDP component (Indian view only) */}
-          {activeCountry === 'india' && gdpFactors && gdpFactors.factors && (
-            <div style={{ marginBottom: 24, padding: '12px 16px', background: C.card, border: '1px solid ' + C.border, borderRadius: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>GDP Factor Matrix</span>
-                  {gdpFactors.factors.map(f => {
-                    const isLead = gdpFactors.leading && gdpFactors.leading.factor === f.factor;
-                    const fc = isLead ? C.green : C.textSec;
-                    return (
-                      <div key={f.factor} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                        <span className="mono" style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>{f.factor}</span>
-                        <span style={{ fontSize: 12, color: fc, fontWeight: isLead ? 700 : 500 }}>
-                          {f.yoy != null ? (f.yoy > 0 ? '+' : '') + f.yoy.toFixed(2) + '%' : 'n/a'}
-                        </span>
-                        {isLead && <span style={{ fontSize: 10, color: C.green, fontWeight: 700 }}>★</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{ fontSize: 11, color: C.textSec }}>
-                  Implied Overweight: {gdpFactors.leading ? (
-                    <span style={{ color: C.green, fontWeight: 700 }}>
-                      {gdpFactors.leading.sectors.join(' / ')}
-                    </span>
-                  ) : <span style={{ color: C.textMut }}>—</span>}
-                </div>
-              </div>
-              <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, fontStyle: 'italic' }}>
-                C = Private Consumption · I = Gross Fixed Capital Formation · X-M = Net Exports. Leading factor's sectors get the GDP-implied tilt.
-              </div>
-            </div>
-          )}
+          {/* Phase-5: GDP Factor Matrix card REMOVED from sector tabs — moved into the dedicated INDIA MACRO tab. */}
 
-          {/* Phase-4: Global Macro Hub takes over the entire view; otherwise render the standard dashboard. */}
-          {inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} /> : (<React.Fragment>
-          {/* KPI Cards */}
+          {/* Phase-5: India Macro Hub takes over when in india-macro country. Phase-4 Global Macro Hub same. */}
+          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} /> : (<React.Fragment>
+          {/* KPI Cards — Phase-5: added EpsGrowthCard with 1Y/2Y/3Y/4Y/5Y/7Y/10Y toggle */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
             <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + (filteredStats?.pe || EMPTY_STATS).mean + 'x'} />
             <StatCard label={indexConfig.shortLabel + " P/B"} value={current.pb} suffix="x" color={C.blue} subtext={'Mean: ' + (filteredStats?.pb || EMPTY_STATS).mean + 'x'} />
@@ -1838,6 +2103,7 @@
             <StatCard label="EYBY Spread" value={current.eyby} suffix="%"
               color={current.eyby > 0 ? C.red : C.green}
               subtext={current.eyby > 0 ? 'Bonds favored' : 'Equities favored'} />
+            <EpsGrowthCard data={data} />
           </div>
 
           {/* EYBY / ERP Toggle Chart */}
@@ -2094,6 +2360,12 @@
             </div>
           )}
 
+          {/* Phase-5: Quarterly EPS + PEG dual-axis chart — non-sector tabs render here (below P/E charts).
+              Sector tabs render below the Relative P/E charts further down. */}
+          {!isSectorIndex(activeIndex) && (
+            <QuarterlyEpsPegChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
+          )}
+
           {/* TAA Module — broad market only (sectors get Relative Valuation instead) */}
           {!isSectorIndex(activeIndex) && taaConfig && <TAAModule data={data} taaConfig={taaConfig} />}
 
@@ -2163,15 +2435,19 @@
                 Relative P/B (Spread) cancels out broad market beta noise and highlights true mean reversion. Absolute P/B may remain elevated during secular bull markets driven by the structural financialization of savings. The relative ratio specifically identifies when sector exuberance decouples from fundamental opportunity cost, providing a higher-conviction TAA signal.
               </p>
             </div>
+            {/* Phase-5: Quarterly EPS + PEG (sector tabs render here, below the Relative P/E pair). */}
+            <QuarterlyEpsPegChart data={data} indexLabel={sectorTitle} period={period} customStartISO={customStartISO} />
             </React.Fragment>
             );
           })()}
 
-          </React.Fragment>)}{/* end inGlobalMacroHub conditional */}
+          </React.Fragment>)}{/* end inIndiaMacroHub / inGlobalMacroHub conditional */}
 
           {/* Footer */}
           <div style={{ textAlign: 'center', padding: '24px 0', fontSize: 12, color: C.textMut, borderTop: '1px solid ' + C.border, marginTop: 32 }}>
-            {inGlobalMacroHub
+            {inIndiaMacroHub
+              ? 'India macro proxies: FRED (IIP, HH Cons., GFCF, CPI, ST Rate) & Yahoo (Nifty Services Sector). Auto-refreshes hourly.'
+              : inGlobalMacroHub
               ? 'Macro data: Yahoo Finance (DXY, USD/JPY) & FRED (10Y-2Y Spread) · Trailing 12M ROC computed daily.'
               : <React.Fragment>Data sourced from NSE India (PE/PB) &amp; Investing.com (10Y G-Sec Yield) &bull; {indexConfig.label} from {dataStartLabel} &bull; {data.length.toLocaleString()} trading days</React.Fragment>}
             <br /><span style={{ opacity: 0.7 }}>Tusk Invest Research</span>
