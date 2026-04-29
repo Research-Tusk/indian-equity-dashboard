@@ -1,48 +1,59 @@
-name: Daily Macro Data Update
+# Phase-5: Web-native daily refresh for ALL tickers, sectors, global indices, and macro proxies.
+# This file replaces the prior workflow that only refreshed Nifty 50, Capital Markets, S&P 500, NASDAQ.
+# Path in repo: .github/workflows/daily-macro-update.yml
+#
+# What changed vs. v47:
+#   - Single `update-all` call (now SEQUENTIAL with 350ms gap inside the Edge Function v48)
+#   - india-macro proxies are warmed up daily via a dedicated curl step
+#   - macro-history (DXY/USDJPY/yieldCurve) and gdp-factors warmed too
+# All work is performed by the deployed Edge Function. The web app pulls fresh data
+# autonomously — no dependency on local Cowork/desktop environments.
+
+name: Daily Macro Update (Phase-5)
 
 on:
   schedule:
-    - cron: '0 1 * * 2-6'
+    # Twice daily: 7:00 AM IST (01:30 UTC) and 7:00 PM IST (13:30 UTC) — every day of the week.
+    - cron: '30 1,13 * * *'
   workflow_dispatch:
 
 jobs:
-  update-macro-data:
+  refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
-      - name: Refresh Nifty 50 data
+      - name: Refresh ALL indices (sequential, 350ms gap, NSE-cookie-primed)
         run: |
-          RESPONSE=$(curl -sf --max-time 120 \
-            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-data&index=nifty50")
-          echo "$RESPONSE" | jq .
-          MERGED=$(echo "$RESPONSE" | jq -r '.merged // 0')
-          echo "Nifty 50: $MERGED rows merged"
-
-      - name: Refresh Nifty Capital Markets data
+          curl -sS --fail-with-body --max-time 300 \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-all" \
+            | head -c 4000
+          echo
+      - name: Warm india-macro proxies (FRED + Yahoo)
         run: |
-          RESPONSE=$(curl -sf --max-time 120 \
-            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-data&index=nifty-capital-markets")
-          echo "$RESPONSE" | jq .
-          MERGED=$(echo "$RESPONSE" | jq -r '.merged // 0')
-          echo "Nifty Capital Markets: $MERGED rows merged"
-
-      - name: Refresh S&P 500 data
+          curl -sS --fail-with-body \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=india-macro" \
+            | head -c 600
+          echo
+      - name: Warm macro-history (DXY / USDJPY / yieldCurve)
         run: |
-          RESPONSE=$(curl -sf --max-time 120 \
-            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-data&index=sp500")
-          echo "$RESPONSE" | jq .
-          MERGED=$(echo "$RESPONSE" | jq -r '.merged // 0')
-          echo "S&P 500: $MERGED rows merged"
-
-      - name: Refresh NASDAQ data
+          curl -sS --fail-with-body \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=macro-history" \
+            > /dev/null
+          echo "macro-history warmed"
+      - name: Warm gdp-factors (legacy ribbon)
         run: |
-          RESPONSE=$(curl -sf --max-time 120 \
-            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-data&index=nasdaq")
-          echo "$RESPONSE" | jq .
-          MERGED=$(echo "$RESPONSE" | jq -r '.merged // 0')
-          echo "NASDAQ: $MERGED rows merged"
-
-      - name: Health check
+          curl -sS --fail-with-body \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=gdp-factors" \
+            > /dev/null
+          echo "gdp-factors warmed"
+      - name: Refresh active stocks universe
         run: |
-          curl -sf --max-time 30 \
-            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=health" | jq '.indices'
+          curl -sS --fail-with-body --max-time 300 \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=stocks-update-all" \
+            | head -c 600
+          echo
+      - name: Health probe
+        run: |
+          curl -sS --fail-with-body \
+            "https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=health" \
+            | head -c 1500
+          echo
