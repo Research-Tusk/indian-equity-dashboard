@@ -362,197 +362,260 @@
     }
     // Phase-5: Quarterly TTM EPS sampled at quarter-end + Daily PEG line overlay.
     // Math guard: clamp PEG = P/E ÷ EPS_growth_1Y; null out if growth ≤ 0 or PEG > 5.
-    function QuarterlyEpsPegChart({ data, indexLabel, period, customStartISO }) {
+    // Phase-5: SPLIT into two independent charts.
+    //   DailyPegChart    — line + 5 SD bands + definition guide
+    //   QuarterlyEpsChart — bars + YoY % labels, period-scoped
+    function DailyPegChart({ data, indexLabel, period, customStartISO }) {
       const filtered = useMemo(() => applyPeriodFilter(data || [], period, customStartISO), [data, period, customStartISO]);
-      // Daily EPS series + 1Y trailing growth + clamped PEG, all derived from Close/PE.
-      const dailyDerived = useMemo(() => {
+      // Use full series for trailing-1Y growth lookback (need 252 days back even when displaying 1Y of PEG).
+      const fullDerived = useMemo(() => {
+        const arr = data || [];
         const out = [];
-        for (let i = 0; i < filtered.length; i++) {
-          const r = filtered[i];
+        for (let i = 0; i < arr.length; i++) {
+          const r = arr[i];
           const eps = deriveEps(r);
           const date = Array.isArray(r) ? r[0] : r.date;
-          const pe = Array.isArray(r) ? r[1] : r.pe;
-          let pegRaw = null, pegPlot = null, growthPct = null;
+          const pe   = Array.isArray(r) ? r[1] : r.pe;
+          let pegPlot = null;
           if (eps != null && i >= 252) {
-            const past = deriveEps(filtered[i - 252]);
+            const past = deriveEps(arr[i - 252]);
             if (past != null && past > 0) {
-              growthPct = ((eps / past) - 1) * 100;
+              const growthPct = ((eps / past) - 1) * 100;
               if (growthPct > 0 && pe != null && pe > 0) {
-                pegRaw = pe / growthPct;
+                const pegRaw = pe / growthPct;
                 pegPlot = (pegRaw > 5) ? null : +pegRaw.toFixed(2);
               }
             }
           }
-          out.push({ date, eps, pe, peg: pegPlot, pegRaw, growthPct });
+          out.push({ date, peg: pegPlot });
         }
         return out;
-      }, [filtered]);
-      // Quarter-end sampling: keep one row per (year, quarter) — the last trading day in that quarter.
-      const quarterly = useMemo(() => {
-        const buckets = {};
-        for (const r of dailyDerived) {
-          if (!r.eps) continue;
-          const m = +r.date.slice(5, 7), y = r.date.slice(0, 4);
-          const q = Math.ceil(m / 3); const key = y + 'Q' + q;
-          if (!buckets[key] || buckets[key].date < r.date) buckets[key] = { ...r, qkey: key };
-        }
-        const arr = Object.values(buckets).sort((a, b) => a.date.localeCompare(b.date));
-        // Compute YoY growth (4 quarters back)
-        for (let i = 4; i < arr.length; i++) {
-          const past = arr[i - 4]?.eps;
-          arr[i].yoy = (past && past > 0) ? +(((arr[i].eps / past) - 1) * 100).toFixed(1) : null;
-        }
-        return arr;
-      }, [dailyDerived]);
-      // Merge: quarterly bars on quarter-end date; daily PEG line elsewhere.
-      const merged = useMemo(() => {
-        const qByDate = {};
-        for (const q of quarterly) qByDate[q.date] = q;
-        return dailyDerived.map(r => ({
-          date: r.date,
-          peg: r.peg,
-          ttmEps: qByDate[r.date]?.eps ?? null,
-          yoy: qByDate[r.date]?.yoy ?? null,
-        }));
-      }, [dailyDerived, quarterly]);
-      const epsDomain = useMemo(() => {
-        const vals = quarterly.map(q => q.eps).filter(v => v != null && isFinite(v));
-        if (vals.length === 0) return [0, 1];
-        return [0, +Math.max(...vals).toFixed(0) * 1.1];
-      }, [quarterly]);
-      // Phase-5.1: PEG mean + ±1σ/±2σ statistics over the currently filtered/active horizon.
+      }, [data]);
+      const filteredPeg = useMemo(() => applyPeriodFilter(fullDerived, period, customStartISO), [fullDerived, period, customStartISO]);
       const pegStats = useMemo(() => {
-        const vals = merged.map(m => m.peg).filter(v => v != null && isFinite(v));
+        const vals = filteredPeg.map(m => m.peg).filter(v => v != null && isFinite(v));
         return vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
-      }, [merged]);
+      }, [filteredPeg]);
       const pegDomain = useMemo(() => {
-        const vals = merged.map(m => m.peg).filter(v => v != null && isFinite(v));
+        const vals = filteredPeg.map(m => m.peg).filter(v => v != null && isFinite(v));
         if (vals.length === 0) return [0, 5];
         const mn = Math.min(...vals), mx = Math.max(...vals);
-        // Expand the axis to include the SD-band range so the ReferenceLines render inside the plot area.
+        // Widen Y-axis dynamically if the SD bands exceed the 0–5 clamp so they're not clipped.
         const lo = Math.min(mn, pegStats.sd2Lower);
         const hi = Math.max(mx, pegStats.sd2Upper);
-        return [Math.max(0, +(lo * 0.95).toFixed(2)), +Math.min(5, hi * 1.05).toFixed(2)];
-      }, [merged, pegStats]);
-      const tickInt = Math.max(1, Math.floor(merged.length / 8));
-      const lastPeg = [...merged].reverse().find(m => m.peg != null);
-
-      const QtipTooltip = ({ active, payload, label }) => {
-        if (!active || !payload?.length) return null;
-        const eps = payload.find(p => p.dataKey === 'ttmEps');
-        const peg = payload.find(p => p.dataKey === 'peg');
-        const q = quarterly.find(x => x.date === label);
-        return (
-          <div style={{ background: '#fff', border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 14px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)' }}>
-            <div className="mono" style={{ fontSize: 11, color: C.textMut, marginBottom: 6 }}>{label}</div>
-            {eps && eps.value != null && (
-              <>
-                <div style={{ fontSize: 12, color: C.textSec }}>TTM EPS: <span className="mono" style={{ color: C.cyan, fontWeight: 600 }}>{(+eps.value).toFixed(2)}</span></div>
-                {q?.yoy != null && (
-                  <div style={{ fontSize: 11, color: q.yoy >= 0 ? C.green : C.red, fontWeight: 600 }}>YoY: {(q.yoy > 0 ? '+' : '') + q.yoy.toFixed(1)}%</div>
-                )}
-              </>
-            )}
-            {peg && peg.value != null && (
-              <div style={{ fontSize: 12, color: C.textSec, marginTop: 4 }}>PEG: <span className="mono" style={{ color: C.purple, fontWeight: 600 }}>{(+peg.value).toFixed(2)}</span></div>
-            )}
-          </div>
-        );
-      };
-
-      // Custom bar label: YoY%
-      const renderYoYLabel = (props) => {
-        const { x, y, width, value, index } = props;
-        const q = quarterly[index]; if (!q || q.yoy == null) return null;
-        const fill = q.yoy >= 0 ? C.green : C.red;
-        return (
-          <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={fill} fontFamily="JetBrains Mono, monospace">
-            {(q.yoy > 0 ? '+' : '') + q.yoy.toFixed(0) + '%'}
-          </text>
-        );
-      };
-
-      if (quarterly.length === 0) return null;
+        return [Math.max(0, +(lo * 0.95).toFixed(2)), +(hi * 1.05).toFixed(2)];
+      }, [filteredPeg, pegStats]);
+      const tickInt = Math.max(1, Math.floor(filteredPeg.length / 8));
+      const lastPeg = [...filteredPeg].reverse().find(m => m.peg != null);
+      if (filteredPeg.filter(m => m.peg != null).length === 0) return null;
       return (
         <div style={{ marginTop: 24 }}>
           <ChartCard
-            title={(indexLabel || '') + ' — Quarterly TTM EPS & Daily PEG Ratio'}
-            subtitle="Bars = TTM EPS sampled at quarter-end (YoY label on top) | Line = Daily PEG (P/E ÷ 1Y EPS Growth) clamped at 0–5"
-            badge={lastPeg && lastPeg.peg != null ? 'PEG ' + lastPeg.peg.toFixed(2) : 'PEG —'}
+            title={(indexLabel || '') + ' — Daily PEG Ratio'}
+            subtitle="Daily P/E divided by trailing-1Y EPS growth, with ±1σ / ±2σ bands over the active horizon."
+            badge={lastPeg && lastPeg.peg != null ? 'PEG ' + lastPeg.peg.toFixed(2) + 'x' : 'PEG —'}
             badgeColor={C.purple}
             badgeBg="rgba(124,58,237,0.15)"
           >
-            <ResponsiveContainer width="100%" height={400}>
-              <ComposedChart data={merged} margin={{ top: 18, right: 50, left: 10, bottom: 10 }}>
+            <ResponsiveContainer width="100%" height={380}>
+              <ComposedChart key={'peg-'+period+'-'+(indexLabel||'')} data={filteredPeg} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
                 <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={tickInt} stroke={C.grid} />
-                <YAxis yAxisId="left" domain={epsDomain} tick={{ fontSize: 11, fill: C.cyan }} stroke={C.cyan} tickFormatter={v => v.toFixed(0)} label={{ value: 'TTM EPS', angle: -90, position: 'insideLeft', fill: C.cyan, fontSize: 11 }} />
-                <YAxis yAxisId="right" orientation="right" domain={pegDomain} tick={{ fontSize: 11, fill: C.purple }} stroke={C.purple} tickFormatter={v => v.toFixed(1) + 'x'} label={{ value: 'PEG', angle: 90, position: 'insideRight', fill: C.purple, fontSize: 11 }} />
-                <Tooltip content={<QtipTooltip />} />
-                <Recharts.Bar yAxisId="left" dataKey="ttmEps" fill={C.cyan} fillOpacity={0.65} barSize={14} isAnimationActive={false} label={renderYoYLabel} />
-                <Line yAxisId="right" type="monotone" dataKey="peg" stroke={C.purple} strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
-                {/* Phase-5.1: institutional SD bands matching Relative P/E + Global Macro Hub styling. strokeDasharray="3 3". */}
-                <ReferenceLine yAxisId="right" y={pegStats.sd2Upper} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+2σ (' + fmt2(pegStats.sd2Upper) + ')', position: 'insideTopRight',    fill: C.red,    fontSize: 10 }} />
-                <ReferenceLine yAxisId="right" y={pegStats.sd1Upper} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+1σ (' + fmt2(pegStats.sd1Upper) + ')', position: 'insideTopRight',    fill: C.amber,  fontSize: 10 }} />
-                <ReferenceLine yAxisId="right" y={pegStats.mean}     stroke={C.purple} strokeWidth={1.5} strokeDasharray="3 3" label={{ value: 'Mean ('+ fmt2(pegStats.mean)     + ')', position: 'insideTopRight',    fill: C.purple, fontSize: 10 }} />
-                <ReferenceLine yAxisId="right" y={pegStats.sd1Lower} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−1σ (' + fmt2(pegStats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber,  fontSize: 10 }} />
-                <ReferenceLine yAxisId="right" y={pegStats.sd2Lower} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−2σ (' + fmt2(pegStats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red,    fontSize: 10 }} />
-                <ReferenceLine yAxisId="right" y={1} stroke={C.green} strokeDasharray="4 4" strokeWidth={1} label={{ value: 'PEG=1 (Fair)', fill: C.green, fontSize: 10, position: 'insideTopLeft' }} />
+                <YAxis domain={pegDomain} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(2) + 'x'} />
+                <Tooltip content={<Tip fields={[{ key: 'peg', label: 'PEG', color: C.purple, suffix: 'x' }]} />} />
+                {/* Institutional ±2σ/±1σ/Mean reference bands matching Relative P/E + Global Macro Hub. */}
+                <ReferenceLine y={pegStats.sd2Upper} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+2σ (' + fmt2(pegStats.sd2Upper) + ')', position: 'insideTopRight',    fill: C.red,    fontSize: 10 }} />
+                <ReferenceLine y={pegStats.sd1Upper} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+1σ (' + fmt2(pegStats.sd1Upper) + ')', position: 'insideTopRight',    fill: C.amber,  fontSize: 10 }} />
+                <ReferenceLine y={pegStats.mean}     stroke={C.purple} strokeWidth={1.5} strokeDasharray="3 3" label={{ value: 'Mean ('+ fmt2(pegStats.mean)     + ')', position: 'insideTopRight',    fill: C.purple, fontSize: 10 }} />
+                <ReferenceLine y={pegStats.sd1Lower} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−1σ (' + fmt2(pegStats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber,  fontSize: 10 }} />
+                <ReferenceLine y={pegStats.sd2Lower} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−2σ (' + fmt2(pegStats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red,    fontSize: 10 }} />
+                <ReferenceLine y={1} stroke={C.green} strokeDasharray="4 4" strokeWidth={1} label={{ value: 'PEG=1 (Fair)', fill: C.green, fontSize: 10, position: 'insideTopLeft' }} />
+                <Line type="monotone" dataKey="peg" stroke={C.purple} strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
               </ComposedChart>
             </ResponsiveContainer>
-            <div style={{ display: 'flex', gap: 18, marginTop: 10, fontSize: 11, color: C.textMut, flexWrap: 'wrap' }}>
-              <span><span style={{ display:'inline-block', width: 12, height: 12, background: C.cyan, opacity: 0.65, marginRight: 4, verticalAlign:'middle' }}></span>Quarterly TTM EPS = Close ÷ P/E (sampled at quarter-end)</span>
-              <span><span style={{ display:'inline-block', width: 16, height: 2, background: C.purple, marginRight: 4, verticalAlign:'middle' }}></span>Daily PEG = P/E ÷ trailing-1Y EPS growth (nullified if growth ≤ 0 or PEG &gt; 5)</span>
-              <span className="mono" style={{ color: C.textMut }}>μ={fmt2(pegStats.mean)} · σ={fmt2(pegStats.sd)}</span>
+            <div style={{ marginTop: 10, padding: '10px 14px', borderLeft: '3px solid ' + C.purple, background: 'rgba(124,58,237,0.05)', borderRadius: '0 6px 6px 0' }}>
+              <p style={{ fontSize: 12, color: C.textSec, margin: 0, fontStyle: 'italic' }}>
+                <span style={{ fontWeight: 600, color: C.text, fontStyle: 'normal' }}>Definition: </span>
+                PEG = Current P/E Ratio ÷ Trailing EPS Growth. Clamped at 5x.
+              </p>
             </div>
           </ChartCard>
         </div>
       );
     }
 
-    function EpsGrowthCard({ data }) {
-      const [lookback, setLookback] = useState('3Y');
+    function QuarterlyEpsChart({ data, indexLabel, period, customStartISO }) {
+      // Period-scoped: scope the source data to the active toggle, then sample quarter-ends.
+      const filtered = useMemo(() => applyPeriodFilter(data || [], period, customStartISO), [data, period, customStartISO]);
+      // Phase 5.2 — CAGR vs YoY decision: when the active period covers > 1 year, show CAGR per bar
+      // (annualised growth from each bar back to the FIRST bar in the visible window). When 1Y or shorter,
+      // fall back to plain trailing-4Q YoY %.
+      const periodMonths = (PERIODS.find(p => p.label === period) || { months: 60 }).months;
+      const useCAGR = periodMonths > 12 && periodMonths < 999;
+      const quarterly = useMemo(() => {
+        const buckets = {};
+        for (const r of filtered) {
+          const eps = deriveEps(r);
+          if (eps == null) continue;
+          const date = Array.isArray(r) ? r[0] : r.date;
+          if (!date) continue;
+          const m = +date.slice(5, 7), y = date.slice(0, 4);
+          const q = Math.ceil(m / 3); const key = y + 'Q' + q;
+          if (!buckets[key] || buckets[key].date < date) buckets[key] = { date, eps, qkey: key };
+        }
+        const arr = Object.values(buckets).sort((a, b) => a.date.localeCompare(b.date));
+        const base = arr[0];
+        for (let i = 0; i < arr.length; i++) {
+          let label = null;
+          if (useCAGR) {
+            // Annualised growth from base of visible window to this bar.
+            if (base && base.eps > 0 && i > 0) {
+              const yrs = i / 4; // quarterly samples → years
+              if (yrs > 0) label = +((Math.pow(arr[i].eps / base.eps, 1 / yrs) - 1) * 100).toFixed(1);
+            }
+            arr[i].labelMode = 'CAGR';
+          } else {
+            // 1Y view — trailing 4Q YoY.
+            if (i >= 4) {
+              const past = arr[i - 4]?.eps;
+              if (past && past > 0) label = +(((arr[i].eps / past) - 1) * 100).toFixed(1);
+            }
+            arr[i].labelMode = 'YoY';
+          }
+          arr[i].growthLabel = label;
+        }
+        return arr;
+      }, [filtered, useCAGR]);
+      const epsDomain = useMemo(() => {
+        const vals = quarterly.map(q => q.eps).filter(v => v != null && isFinite(v));
+        if (vals.length === 0) return [0, 1];
+        const mx = Math.max(...vals); const mn = Math.min(...vals);
+        return [Math.max(0, +(mn * 0.85).toFixed(0)), +(mx * 1.15).toFixed(0)];
+      }, [quarterly]);
+      const renderYoYLabel = (props) => {
+        const { x, y, width, index } = props;
+        const q = quarterly[index]; if (!q || q.growthLabel == null) return null;
+        const fill = q.growthLabel >= 0 ? C.green : C.red;
+        return (
+          <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={10} fontWeight={600} fill={fill} fontFamily="JetBrains Mono, monospace">
+            {(q.growthLabel > 0 ? '+' : '') + q.growthLabel.toFixed(0) + '%'}
+          </text>
+        );
+      };
+      if (quarterly.length === 0) return null;
+      const latest = quarterly[quarterly.length - 1];
+      return (
+        <div style={{ marginTop: 24 }}>
+          <ChartCard
+            title={(indexLabel || '') + ' — Quarterly TTM EPS'}
+            subtitle={'Trailing 12-month EPS sampled at each quarter-end · ' + (useCAGR ? 'CAGR' : 'YoY') + ' % labelled on top of every bar (period-scoped to the master toggle)'}
+            badge={latest ? 'EPS ' + latest.eps.toFixed(2) : 'EPS —'}
+            badgeColor={C.cyan}
+            badgeBg="rgba(8,145,178,0.15)"
+          >
+            <ResponsiveContainer width="100%" height={360}>
+              <ComposedChart key={'eps-'+period+'-'+(indexLabel||'')} data={quarterly} margin={{ top: 24, right: 30, left: 10, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                <XAxis dataKey="date" tickFormatter={d => { const dt = new Date(d); return 'Q' + Math.ceil((dt.getMonth()+1)/3) + " '" + String(dt.getFullYear()).slice(2); }} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} />
+                <YAxis domain={epsDomain} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(0)} />
+                <Tooltip content={({active, payload, label}) => {
+                  if (!active || !payload?.length) return null;
+                  const q = quarterly.find(x => x.date === label);
+                  return (
+                    <div style={{ background: '#fff', border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 14px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)' }}>
+                      <div className="mono" style={{ fontSize: 11, color: C.textMut, marginBottom: 6 }}>{q?.qkey || label}</div>
+                      <div style={{ fontSize: 12, color: C.textSec }}>TTM EPS: <span className="mono" style={{ color: C.cyan, fontWeight: 600 }}>{q ? q.eps.toFixed(2) : '—'}</span></div>
+                      {q?.growthLabel != null && (
+                        <div style={{ fontSize: 11, color: q.growthLabel >= 0 ? C.green : C.red, fontWeight: 600 }}>{q.labelMode || 'YoY'}: {(q.growthLabel > 0 ? '+' : '') + q.growthLabel.toFixed(1)}%</div>
+                      )}
+                    </div>
+                  );
+                }} />
+                <Recharts.Bar dataKey="eps" fill={C.cyan} fillOpacity={0.7} barSize={Math.min(40, Math.floor(800 / Math.max(quarterly.length, 8)))} isAnimationActive={false} label={renderYoYLabel} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
+      );
+    }
+
+    function EpsGrowthCard({ data, masterPeriod }) {
+      // Phase 5.2: default = mirror master period toggle. User can still override via right-side chips.
+      // Master "All" / "Date" → fall back to 5Y as a sensible default.
+      const masterToLookback = (mp) => {
+        if (!mp) return '3Y';
+        const known = EPS_LOOKBACKS.find(p => p.label === mp);
+        return known ? mp : '5Y';
+      };
+      const [lookback, setLookback] = useState(() => masterToLookback(masterPeriod));
+      const [userOverride, setUserOverride] = useState(false);
+      // Auto-mirror master changes unless user has manually clicked a chip.
+      useEffect(() => {
+        if (!userOverride) setLookback(masterToLookback(masterPeriod));
+      }, [masterPeriod, userOverride]);
       const cfg = EPS_LOOKBACKS.find(p => p.label === lookback) || EPS_LOOKBACKS[2];
-      // Walk backwards from the end to find the latest valid EPS, then back N trading days.
+
+      // Years for CAGR math: 252 trading days = 1 year.
+      const yearsBack = cfg.td / 252;
+
       const result = useMemo(() => {
-        if (!data || data.length === 0) return { current: null, past: null, roc: null, currentDate: null, pastDate: null };
+        if (!data || data.length === 0) return { current: null, past: null, growth: null, isCAGR: false, currentDate: null, pastDate: null };
         let curIdx = -1;
         for (let i = data.length - 1; i >= 0; i--) { if (deriveEps(data[i]) != null) { curIdx = i; break; } }
-        if (curIdx < 0) return { current: null, past: null, roc: null, currentDate: null, pastDate: null };
+        if (curIdx < 0) return { current: null, past: null, growth: null, isCAGR: false, currentDate: null, pastDate: null };
         const targetIdx = curIdx - cfg.td;
-        if (targetIdx < 0) return { current: deriveEps(data[curIdx]), past: null, roc: null, currentDate: (Array.isArray(data[curIdx]) ? data[curIdx][0] : data[curIdx].date), pastDate: null };
-        // Step back until a valid past EPS is found (allow ±10 days drift).
+        if (targetIdx < 0) return { current: deriveEps(data[curIdx]), past: null, growth: null, isCAGR: false, currentDate: (Array.isArray(data[curIdx]) ? data[curIdx][0] : data[curIdx].date), pastDate: null };
         let pastIdx = -1;
         for (let j = targetIdx; j >= Math.max(0, targetIdx - 10) && j < data.length; j--) { if (deriveEps(data[j]) != null) { pastIdx = j; break; } }
         if (pastIdx < 0) for (let j = targetIdx; j <= Math.min(data.length - 1, targetIdx + 10); j++) { if (deriveEps(data[j]) != null) { pastIdx = j; break; } }
         const cur = deriveEps(data[curIdx]);
         const past = pastIdx >= 0 ? deriveEps(data[pastIdx]) : null;
-        const roc = (cur != null && past != null && past > 0) ? ((cur / past) - 1) * 100 : null;
+        // Phase 5.2 — for periods > 1 year compute CAGR; for 1Y use absolute YoY.
+        let growth = null, isCAGR = false;
+        if (cur != null && past != null && past > 0) {
+          if (yearsBack > 1) {
+            growth = (Math.pow(cur / past, 1 / yearsBack) - 1) * 100;
+            isCAGR = true;
+          } else {
+            growth = ((cur / past) - 1) * 100;
+            isCAGR = false;
+          }
+        }
         return {
-          current: cur, past,
-          roc,
+          current: cur, past, growth, isCAGR,
           currentDate: Array.isArray(data[curIdx]) ? data[curIdx][0] : data[curIdx].date,
           pastDate: pastIdx >= 0 ? (Array.isArray(data[pastIdx]) ? data[pastIdx][0] : data[pastIdx].date) : null,
         };
-      }, [data, cfg]);
-      const rocColor = result.roc == null ? C.textMut : result.roc >= 0 ? C.green : C.red;
-      const rocText = result.roc == null ? '—' : (result.roc > 0 ? '+' : '') + result.roc.toFixed(1) + '%';
+      }, [data, cfg, yearsBack]);
+
+      const color = result.growth == null ? C.textMut : result.growth >= 0 ? C.green : C.red;
+      const valText = result.growth == null ? '—' : (result.growth > 0 ? '+' : '') + result.growth.toFixed(1) + '%';
+      const labelText = 'EPS ' + (result.isCAGR ? 'CAGR' : 'Growth') + ' (' + lookback + ')';
       return (
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: '16px 20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>EPS Growth ({lookback})</div>
-            <div style={{ display: 'flex', gap: 2 }}>
-              {EPS_LOOKBACKS.map(p => (
-                <button key={p.label} onClick={() => setLookback(p.label)}
-                  style={{ background: lookback === p.label ? C.text : 'transparent', border: '1px solid ' + (lookback === p.label ? C.text : C.border), color: lookback === p.label ? '#fff' : C.textMut, borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                  {p.label}
-                </button>
-              ))}
+          {/* Phase 5.2 layout: label on left, toggle chips on the right. */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{labelText}</div>
+              <div className="mono" style={{ fontSize: 26, fontWeight: 700, color, marginTop: 4 }}>{valText}</div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', maxWidth: 130, justifyContent: 'flex-end' }}>
+                {EPS_LOOKBACKS.map(p => (
+                  <button key={p.label} onClick={() => { setLookback(p.label); setUserOverride(true); }}
+                    style={{ background: lookback === p.label ? C.text : 'transparent', border: '1px solid ' + (lookback === p.label ? C.text : C.border), color: lookback === p.label ? '#fff' : C.textMut, borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              {userOverride && (
+                <button onClick={() => setUserOverride(false)} title="Sync this card to the master period toggle"
+                  style={{ background: 'transparent', border: 'none', color: C.cyan, fontSize: 9, fontStyle: 'italic', cursor: 'pointer', textAlign: 'right', padding: '1px 2px' }}>↻ sync to {masterToLookback(masterPeriod)}</button>
+              )}
             </div>
           </div>
-          <div className="mono" style={{ fontSize: 26, fontWeight: 700, color: rocColor, marginTop: 4 }}>{rocText}</div>
-          <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, lineHeight: 1.4 }}>
-            EPS now: <span className="mono" style={{ color: C.textSec }}>{result.current != null ? result.current.toFixed(2) : '—'}</span>
+          <div style={{ fontSize: 11, color: C.textMut, marginTop: 6, lineHeight: 1.4 }}>
+            {result.isCAGR ? 'CAGR' : 'Δ'}: <span className="mono" style={{ color: C.textSec }}>{result.current != null ? result.current.toFixed(2) : '—'}</span>
             {' '}vs <span className="mono" style={{ color: C.textSec }}>{result.past != null ? result.past.toFixed(2) : '—'}</span>
             {result.pastDate ? <span style={{ opacity: 0.7 }}> ({result.pastDate.slice(0,7)})</span> : null}
           </div>
@@ -1222,11 +1285,15 @@
       const fmtPct = v => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%';
       const fmtVal = v => v == null ? '—' : (+v).toFixed(2);
       const tone = v => v == null ? C.textMut : v >= 0 ? C.green : C.red;
-      const Cell = ({ label, sub, val, yoy, color }) => (
+      // Phase-5: hideRawIndex=true for CPI / Repo so the cell shows YoY % only — the raw FRED index value
+      // is meaningless to a trader and was previously confused for the inflation rate itself.
+      const Cell = ({ label, sub, val, yoy, color, hideRawIndex }) => (
         <div style={{ padding: 16, borderRadius: 10, background: '#fff', border: '1px solid ' + C.border, minHeight: 96 }}>
           <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{label}</div>
           <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: color || C.text, marginTop: 4 }}>{fmtPct(yoy)}</div>
-          <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Latest: <span className="mono">{fmtVal(val)}</span></div>
+          {!hideRawIndex && (
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Latest: <span className="mono">{fmtVal(val)}</span></div>
+          )}
           {sub && <div style={{ fontSize: 10, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>{sub}</div>}
         </div>
       );
@@ -1275,8 +1342,8 @@
               Monetary Backdrop
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-              <Cell label="CPI Inflation" sub={mon.cpi?.source} val={mon.cpi?.latest} yoy={mon.cpi?.yoy} color={tone(-(mon.cpi?.yoy ?? 0))} />
-              <Cell label="Short-Term Rate (RBI proxy)" sub={mon.repo?.source} val={mon.repo?.latest} yoy={mon.repo?.yoy} color={tone(-(mon.repo?.yoy ?? 0))} />
+              <Cell label="CPI Inflation (YoY)"          sub={mon.cpi?.source}  val={mon.cpi?.latest}  yoy={mon.cpi?.yoy}  color={tone(-(mon.cpi?.yoy  ?? 0))} hideRawIndex />
+              <Cell label="Short-Term Rate Δ (RBI proxy)" sub={mon.repo?.source} val={mon.repo?.latest} yoy={mon.repo?.yoy} color={tone(-(mon.repo?.yoy ?? 0))} hideRawIndex />
             </div>
           </div>
         </div>
@@ -1303,7 +1370,11 @@
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>Global Macro Hub</h2>
           <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 24px' }}>10-year history of the three institutional macro signals.</p>
-          {charts.map(c => (
+          {charts.map(c => {
+            // Phase-5: Mean / ±1σ / ±2σ over the visible time horizon for institutional reference bands.
+            const vals = c.data.map(d => d[c.dataKey]).filter(v => v != null && isFinite(v));
+            const stats = vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
+            return (
             <div key={c.key} style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
                 <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>{c.title}</h3>
@@ -1318,6 +1389,12 @@
                   <YAxis tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + c.suffix} />
                   <Tooltip content={<Tip fields={[{ key: c.dataKey, label: c.title.split(' — ')[0], color: c.color, suffix: c.suffix }]} />} />
                   <ReferenceLine y={0} stroke={C.textMut} strokeWidth={1} />
+                  {/* Phase-5: institutional ±2σ/±1σ/Mean reference bands. */}
+                  <ReferenceLine y={stats.sd2Upper} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+2σ (' + fmt2(stats.sd2Upper) + ')', position: 'insideTopRight',    fill: C.red,    fontSize: 10 }} />
+                  <ReferenceLine y={stats.sd1Upper} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+1σ (' + fmt2(stats.sd1Upper) + ')', position: 'insideTopRight',    fill: C.amber,  fontSize: 10 }} />
+                  <ReferenceLine y={stats.mean}     stroke={C.purple} strokeWidth={1.5} strokeDasharray="3 3" label={{ value: 'Mean ('+ fmt2(stats.mean)     + ')', position: 'insideTopRight',    fill: C.purple, fontSize: 10 }} />
+                  <ReferenceLine y={stats.sd1Lower} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−1σ (' + fmt2(stats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber,  fontSize: 10 }} />
+                  <ReferenceLine y={stats.sd2Lower} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−2σ (' + fmt2(stats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red,    fontSize: 10 }} />
                   <Line type="monotone" dataKey={c.dataKey} stroke={c.color} strokeWidth={2} dot={false} isAnimationActive={false} />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -1326,9 +1403,11 @@
                   <span style={{ fontWeight: 700, color: C.text, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Implication: </span>
                   {c.note}
                 </p>
+                <p className="mono" style={{ fontSize: 11, color: C.textMut, margin: '6px 0 0' }}>μ={fmt2(stats.mean)}{c.suffix} · σ={fmt2(stats.sd)}{c.suffix} · n={vals.length}</p>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       );
     }
@@ -2118,7 +2197,7 @@
             <StatCard label="EYBY Spread" value={current.eyby} suffix="%"
               color={current.eyby > 0 ? C.red : C.green}
               subtext={current.eyby > 0 ? 'Bonds favored' : 'Equities favored'} />
-            <EpsGrowthCard data={data} />
+            <EpsGrowthCard data={data} masterPeriod={period} />
           </div>
 
           {/* EYBY / ERP Toggle Chart */}
@@ -2378,7 +2457,8 @@
           {/* Phase-5: Quarterly EPS + PEG dual-axis chart — non-sector tabs render here (below P/E charts).
               Sector tabs render below the Relative P/E charts further down. */}
           {!isSectorIndex(activeIndex) && (
-            <QuarterlyEpsPegChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
+            <DailyPegChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
+          <QuarterlyEpsChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
           )}
 
           {/* TAA Module — broad market only (sectors get Relative Valuation instead) */}
@@ -2451,7 +2531,8 @@
               </p>
             </div>
             {/* Phase-5: Quarterly EPS + PEG (sector tabs render here, below the Relative P/E pair). */}
-            <QuarterlyEpsPegChart data={data} indexLabel={sectorTitle} period={period} customStartISO={customStartISO} />
+            <DailyPegChart data={data} indexLabel={sectorTitle} period={period} customStartISO={customStartISO} />
+            <QuarterlyEpsChart data={data} indexLabel={sectorTitle} period={period} customStartISO={customStartISO} />
             </React.Fragment>
             );
           })()}
