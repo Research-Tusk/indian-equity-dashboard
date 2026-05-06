@@ -2457,8 +2457,10 @@
           {/* Phase-5: Quarterly EPS + PEG dual-axis chart — non-sector tabs render here (below P/E charts).
               Sector tabs render below the Relative P/E charts further down. */}
           {!isSectorIndex(activeIndex) && (
-            <DailyPegChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
-          <QuarterlyEpsChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
+            <React.Fragment>
+              <DailyPegChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
+              <QuarterlyEpsChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
+            </React.Fragment>
           )}
 
           {/* TAA Module — broad market only (sectors get Relative Valuation instead) */}
