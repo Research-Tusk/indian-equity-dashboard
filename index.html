@@ -362,87 +362,8 @@
     }
     // Phase-5: Quarterly TTM EPS sampled at quarter-end + Daily PEG line overlay.
     // Math guard: clamp PEG = P/E ÷ EPS_growth_1Y; null out if growth ≤ 0 or PEG > 5.
-    // Phase-5: SPLIT into two independent charts.
-    //   DailyPegChart    — line + 5 SD bands + definition guide
-    //   QuarterlyEpsChart — bars + YoY % labels, period-scoped
-    function DailyPegChart({ data, indexLabel, period, customStartISO }) {
-      const filtered = useMemo(() => applyPeriodFilter(data || [], period, customStartISO), [data, period, customStartISO]);
-      // Use full series for trailing-1Y growth lookback (need 252 days back even when displaying 1Y of PEG).
-      const fullDerived = useMemo(() => {
-        const arr = data || [];
-        const out = [];
-        for (let i = 0; i < arr.length; i++) {
-          const r = arr[i];
-          const eps = deriveEps(r);
-          const date = Array.isArray(r) ? r[0] : r.date;
-          const pe   = Array.isArray(r) ? r[1] : r.pe;
-          let pegPlot = null;
-          if (eps != null && i >= 252) {
-            const past = deriveEps(arr[i - 252]);
-            if (past != null && past > 0) {
-              const growthPct = ((eps / past) - 1) * 100;
-              if (growthPct > 0 && pe != null && pe > 0) {
-                const pegRaw = pe / growthPct;
-                pegPlot = (pegRaw > 5) ? null : +pegRaw.toFixed(2);
-              }
-            }
-          }
-          out.push({ date, peg: pegPlot });
-        }
-        return out;
-      }, [data]);
-      const filteredPeg = useMemo(() => applyPeriodFilter(fullDerived, period, customStartISO), [fullDerived, period, customStartISO]);
-      const pegStats = useMemo(() => {
-        const vals = filteredPeg.map(m => m.peg).filter(v => v != null && isFinite(v));
-        return vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
-      }, [filteredPeg]);
-      const pegDomain = useMemo(() => {
-        const vals = filteredPeg.map(m => m.peg).filter(v => v != null && isFinite(v));
-        if (vals.length === 0) return [0, 5];
-        const mn = Math.min(...vals), mx = Math.max(...vals);
-        // Widen Y-axis dynamically if the SD bands exceed the 0–5 clamp so they're not clipped.
-        const lo = Math.min(mn, pegStats.sd2Lower);
-        const hi = Math.max(mx, pegStats.sd2Upper);
-        return [Math.max(0, +(lo * 0.95).toFixed(2)), +(hi * 1.05).toFixed(2)];
-      }, [filteredPeg, pegStats]);
-      const tickInt = Math.max(1, Math.floor(filteredPeg.length / 8));
-      const lastPeg = [...filteredPeg].reverse().find(m => m.peg != null);
-      if (filteredPeg.filter(m => m.peg != null).length === 0) return null;
-      return (
-        <div style={{ marginTop: 24 }}>
-          <ChartCard
-            title={(indexLabel || '') + ' — Daily PEG Ratio'}
-            subtitle="Daily P/E divided by trailing-1Y EPS growth, with ±1σ / ±2σ bands over the active horizon."
-            badge={lastPeg && lastPeg.peg != null ? 'PEG ' + lastPeg.peg.toFixed(2) + 'x' : 'PEG —'}
-            badgeColor={C.purple}
-            badgeBg="rgba(124,58,237,0.15)"
-          >
-            <ResponsiveContainer width="100%" height={380}>
-              <ComposedChart key={'peg-'+period+'-'+(indexLabel||'')} data={filteredPeg} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
-                <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={tickInt} stroke={C.grid} />
-                <YAxis domain={pegDomain} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(2) + 'x'} />
-                <Tooltip content={<Tip fields={[{ key: 'peg', label: 'PEG', color: C.purple, suffix: 'x' }]} />} />
-                {/* Institutional ±2σ/±1σ/Mean reference bands matching Relative P/E + Global Macro Hub. */}
-                <ReferenceLine y={pegStats.sd2Upper} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+2σ (' + fmt2(pegStats.sd2Upper) + ')', position: 'insideTopRight',    fill: C.red,    fontSize: 10 }} />
-                <ReferenceLine y={pegStats.sd1Upper} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+1σ (' + fmt2(pegStats.sd1Upper) + ')', position: 'insideTopRight',    fill: C.amber,  fontSize: 10 }} />
-                <ReferenceLine y={pegStats.mean}     stroke={C.purple} strokeWidth={1.5} strokeDasharray="3 3" label={{ value: 'Mean ('+ fmt2(pegStats.mean)     + ')', position: 'insideTopRight',    fill: C.purple, fontSize: 10 }} />
-                <ReferenceLine y={pegStats.sd1Lower} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−1σ (' + fmt2(pegStats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber,  fontSize: 10 }} />
-                <ReferenceLine y={pegStats.sd2Lower} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−2σ (' + fmt2(pegStats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red,    fontSize: 10 }} />
-                <ReferenceLine y={1} stroke={C.green} strokeDasharray="4 4" strokeWidth={1} label={{ value: 'PEG=1 (Fair)', fill: C.green, fontSize: 10, position: 'insideTopLeft' }} />
-                <Line type="monotone" dataKey="peg" stroke={C.purple} strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-            <div style={{ marginTop: 10, padding: '10px 14px', borderLeft: '3px solid ' + C.purple, background: 'rgba(124,58,237,0.05)', borderRadius: '0 6px 6px 0' }}>
-              <p style={{ fontSize: 12, color: C.textSec, margin: 0, fontStyle: 'italic' }}>
-                <span style={{ fontWeight: 600, color: C.text, fontStyle: 'normal' }}>Definition: </span>
-                PEG = Current P/E Ratio ÷ Trailing EPS Growth. Clamped at 5x.
-              </p>
-            </div>
-          </ChartCard>
-        </div>
-      );
-    }
+    // Phase 5.3 — DailyPegChart removed (deprecated). Only QuarterlyEpsChart remains and is rendered
+    // exclusively inside the Sector Tab branch, directly below the ROE vs P/B Overlay.
 
     function QuarterlyEpsChart({ data, indexLabel, period, customStartISO }) {
       // Period-scoped: scope the source data to the active toggle, then sample quarter-ends.
@@ -593,26 +514,25 @@
       const labelText = 'EPS ' + (result.isCAGR ? 'CAGR' : 'Growth') + ' (' + lookback + ')';
       return (
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: '16px 20px' }}>
-          {/* Phase 5.2 layout: label on left, toggle chips on the right. */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{labelText}</div>
+          {/* Phase 5.3 — pills now wrap onto a second row so they never overflow the card boundary.
+              Header row holds only the label and the value; pills get their own full-width row below. */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{labelText}</div>
               <div className="mono" style={{ fontSize: 26, fontWeight: 700, color, marginTop: 4 }}>{valText}</div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
-              <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', maxWidth: 130, justifyContent: 'flex-end' }}>
-                {EPS_LOOKBACKS.map(p => (
-                  <button key={p.label} onClick={() => { setLookback(p.label); setUserOverride(true); }}
-                    style={{ background: lookback === p.label ? C.text : 'transparent', border: '1px solid ' + (lookback === p.label ? C.text : C.border), color: lookback === p.label ? '#fff' : C.textMut, borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-              {userOverride && (
-                <button onClick={() => setUserOverride(false)} title="Sync this card to the master period toggle"
-                  style={{ background: 'transparent', border: 'none', color: C.cyan, fontSize: 9, fontStyle: 'italic', cursor: 'pointer', textAlign: 'right', padding: '1px 2px' }}>↻ sync to {masterToLookback(masterPeriod)}</button>
-              )}
-            </div>
+            {userOverride && (
+              <button onClick={() => setUserOverride(false)} title="Sync this card to the master period toggle"
+                style={{ background: 'transparent', border: 'none', color: C.cyan, fontSize: 9, fontStyle: 'italic', cursor: 'pointer', padding: '1px 2px', flexShrink: 0, alignSelf: 'flex-start' }}>↻ sync to {masterToLookback(masterPeriod)}</button>
+            )}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8, justifyContent: 'flex-end' }}>
+            {EPS_LOOKBACKS.map(p => (
+              <button key={p.label} onClick={() => { setLookback(p.label); setUserOverride(true); }}
+                style={{ background: lookback === p.label ? C.text : 'transparent', border: '1px solid ' + (lookback === p.label ? C.text : C.border), color: lookback === p.label ? '#fff' : C.textMut, borderRadius: 4, padding: '2px 7px', fontSize: 10, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif', flexShrink: 0 }}>
+                {p.label}
+              </button>
+            ))}
           </div>
           <div style={{ fontSize: 11, color: C.textMut, marginTop: 6, lineHeight: 1.4 }}>
             {result.isCAGR ? 'CAGR' : 'Δ'}: <span className="mono" style={{ color: C.textSec }}>{result.current != null ? result.current.toFixed(2) : '—'}</span>
@@ -1187,28 +1107,54 @@
       const z_pb = useMemo(() => rollingZ(pbSeries, 252), [pbSeries]);
 
       // Block A — Fundamental Attractiveness (5 factors, polarity hard-coded).
-      // bullishHigh=true → high z renders Green; false → high z renders Red.
+      // Phase 5.3 — POLARITY INVERTED ACROSS THE BOARD. Per the contrarian framework, every metric is
+      // treated as inverse: a high absolute value pushes the indicator LEFT (Red/Bearish). bullishHigh is
+      // hardcoded to false on every factor below — including EYBY, ERP, and Breadth (which previously
+      // mapped high → green). Slider math (FactorBar) multiplies z by polarity (-1) before plotting.
       const fundamentalFactors = [
-        { k: 'eyby',     label: 'EYBY (Earnings Yield ÷ Bond Yield)', rawZ: i >= 0 && sig ? sig.z_eyby[i] : null,                    rawValue: rich && i >= 0 ? rich[i].eyby : null, suffix: '%', bullishHigh: true,  help: 'Higher = equities cheap relative to bonds → Bullish.' },
-        { k: 'erp',      label: 'Equity Risk Premium',                rawZ: i >= 0 && sig ? sig.z_erp[i] : null,                     rawValue: latest ? latest.erp : null,            suffix: '%', bullishHigh: true,  help: 'Higher = equities cheap vs. risk-free rate → Bullish.' },
-        { k: 'pe',       label: 'P/E Ratio',                          rawZ: i >= 0 ? z_pe[i] : null,                                 rawValue: peLatest,                              suffix: 'x', bullishHigh: false, help: 'Higher = expensive earnings → Bearish.' },
-        { k: 'pb',       label: 'P/B Ratio',                          rawZ: i >= 0 ? z_pb[i] : null,                                 rawValue: pbLatest,                              suffix: 'x', bullishHigh: false, help: 'Higher = expensive book value → Bearish.' },
-        { k: 'mcap_gdp', label: 'Market Cap / GDP',                   rawZ: i >= 0 && sig ? sig.z_mcap_gdp[i] : null,                rawValue: latest ? latest.mcap : null,           suffix: '%', bullishHigh: false, help: 'Buffett Indicator. Higher = overvaluation → Bearish.' },
+        { k: 'eyby',     label: 'EYBY (Earnings Yield ÷ Bond Yield)', rawZ: i >= 0 && sig ? sig.z_eyby[i] : null,                    rawValue: rich && i >= 0 ? rich[i].eyby : null, suffix: '%', bullishHigh: false, help: 'Contrarian view — high absolute reading flagged Red.' },
+        { k: 'erp',      label: 'Equity Risk Premium',                rawZ: i >= 0 && sig ? sig.z_erp[i] : null,                     rawValue: latest ? latest.erp : null,            suffix: '%', bullishHigh: false, help: 'Contrarian view — high absolute reading flagged Red.' },
+        { k: 'pe',       label: 'P/E Ratio',                          rawZ: i >= 0 ? z_pe[i] : null,                                 rawValue: peLatest,                              suffix: 'x', bullishHigh: false, help: 'Higher = expensive earnings → Red/Bearish.' },
+        { k: 'pb',       label: 'P/B Ratio',                          rawZ: i >= 0 ? z_pb[i] : null,                                 rawValue: pbLatest,                              suffix: 'x', bullishHigh: false, help: 'Higher = expensive book value → Red/Bearish.' },
+        { k: 'mcap_gdp', label: 'Market Cap / GDP',                   rawZ: i >= 0 && sig ? sig.z_mcap_gdp[i] : null,                rawValue: latest ? latest.mcap : null,           suffix: '%', bullishHigh: false, help: 'Buffett Indicator — high absolute reading → Red/Bearish.' },
       ];
-      // Block B — Technical Signals (3 factors).
+      // Block B — Technical Signals (3 factors). All inverse per Phase 5.3 polarity rule.
       const technicalFactors = [
-        { k: 'rsi',     label: 'RSI-14',                              rawZ: i >= 0 && sig ? sig.z_rsi[i] : null,    rawValue: rich && i >= 0 ? rich[i].rsi14 : null, suffix: '',  bullishHigh: false, help: 'Higher = overbought → Red. Lower = oversold → Green.' },
+        { k: 'rsi',     label: 'RSI-14',                              rawZ: i >= 0 && sig ? sig.z_rsi[i] : null,    rawValue: rich && i >= 0 ? rich[i].rsi14 : null, suffix: '',  bullishHigh: false, help: 'Higher = overbought → Red.' },
         { k: 'fii_fut', label: 'FII Index Fut Net Long',              rawZ: i >= 0 && sig ? sig.z_fii[i] : null,    rawValue: latest ? latest.fii : null,            suffix: '%', bullishHigh: false, help: 'Higher = crowded long / froth → Red.' },
-        { k: 'breadth', label: 'Breadth (% > 200 DMA)',               rawZ: i >= 0 && sig ? sig.z_breadth[i] : null,rawValue: rich && i >= 0 ? rich[i].breadth : null,suffix: '%', bullishHigh: true,  help: 'Higher = broad participation → Green.' },
+        { k: 'breadth', label: 'Breadth (% > 200 DMA)',               rawZ: i >= 0 && sig ? sig.z_breadth[i] : null,rawValue: rich && i >= 0 ? rich[i].breadth : null,suffix: '%', bullishHigh: false, help: 'Contrarian view — high reading flagged Red.' },
       ];
-      // sig variable retained but signMode/dir-toggle UI removed; valMode (ERP vs EYBY) state kept for module-internal use.
-      // The eslint warnings for unused `latest`, `weights`, `setWeights`, `slope`, `setSlope`, `effWeights`, `weightSeries`, `backtest` are intentional —
-      // the broader TAA backtest framework is still wired so future restoration of weighted gauge UI is one-line away.
+      // Phase 5.4 — Dynamic polarity configuration engine.
+      // Default: every metric set to 'lower' (high reading → Red/Bearish). User can override per-metric
+      // via the config panel; clicking a toggle updates `pendingConfig`, Save commits to `gaugeConfig`
+      // and persists to localStorage. Math: 'lower' → flip z (z * -1), 'higher' → use z directly.
+      const GAUGE_CONFIG_KEY = 'taa_gauge_polarity_v1';
+      const DEFAULT_GAUGE_CONFIG = { eyby: 'lower', erp: 'lower', pe: 'lower', pb: 'lower', mcap_gdp: 'lower', rsi: 'lower', fii_fut: 'lower', breadth: 'lower' };
+      const [gaugeConfig, setGaugeConfig] = useState(() => {
+        try {
+          const stored = JSON.parse(localStorage.getItem(GAUGE_CONFIG_KEY) || 'null');
+          if (stored && typeof stored === 'object') return { ...DEFAULT_GAUGE_CONFIG, ...stored };
+        } catch (_e) {}
+        return { ...DEFAULT_GAUGE_CONFIG };
+      });
+      const [pendingConfig, setPendingConfig] = useState(gaugeConfig);
+      const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'saved'
+      const isDirty = Object.keys(pendingConfig).some(k => pendingConfig[k] !== gaugeConfig[k]);
+      const flipPolarity = (k) => setPendingConfig(prev => ({ ...prev, [k]: prev[k] === 'lower' ? 'higher' : 'lower' }));
+      const saveConfig = () => {
+        setSaveState('saving');
+        setGaugeConfig(pendingConfig);
+        try { localStorage.setItem(GAUGE_CONFIG_KEY, JSON.stringify(pendingConfig)); } catch (_e) {}
+        setTimeout(() => setSaveState('saved'), 200);
+        setTimeout(() => setSaveState('idle'), 1800);
+      };
 
       function FactorBar({ f }) {
         const z = (f.rawZ != null && Number.isFinite(+f.rawZ)) ? +f.rawZ : null;
-        // Map z-score → marker position (0=Bearish, 100=Bullish). bullishHigh:false flips the axis.
-        const effZ = z != null ? (f.bullishHigh ? z : -z) : null;
+        // Phase 5.4: read polarity from live gaugeConfig (NOT the hardcoded bullishHigh on the factor row).
+        // 'lower' (default) → high z pushed Left/Red. 'higher' → high z pushed Right/Green.
+        const polarity = gaugeConfig[f.k] || 'lower';
+        const effZ = z != null ? (polarity === 'higher' ? z : -z) : null;
         const pos = effZ != null ? Math.max(0, Math.min(100, 50 + effZ * 25)) : 50;
         const valStr = (f.rawValue != null && Number.isFinite(+f.rawValue))
           ? ((+f.rawValue).toFixed(f.suffix === 'x' ? 2 : f.suffix === '%' ? 2 : 1) + (f.suffix || ''))
@@ -1219,6 +1165,9 @@
               <span style={{ fontSize: 13, color: C.textSec, fontWeight: 500 }}>
                 {f.label}
                 <span className="mono" style={{ marginLeft: 8, fontSize: 11, color: C.textMut }}>({valStr})</span>
+                <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 600, color: polarity === 'lower' ? C.red : C.green, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  {polarity === 'lower' ? '↓ lower is better' : '↑ higher is better'}
+                </span>
               </span>
               <span className="mono" style={{ fontSize: 11, color: C.textMut }}>{z != null ? z.toFixed(2) + 'σ' : '—'}</span>
             </div>
@@ -1234,8 +1183,70 @@
         );
       }
 
+      // Phase 5.4 — Polarity config panel. Renders all 8 metrics with two-button toggles. Save commits to localStorage.
+      const allFactors = [...fundamentalFactors, ...technicalFactors];
+      function PolarityConfigPanel() {
+        return (
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid ' + C.border, paddingBottom: 12, marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Gauge Polarity Configuration</div>
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>Set whether a HIGH reading should render Red (Lower is Better, contrarian) or Green (Higher is Better, directional) per metric. Saved per-browser via localStorage.</div>
+              </div>
+              <button onClick={saveConfig} disabled={!isDirty || saveState !== 'idle'}
+                style={{
+                  background: saveState === 'saved' ? C.green : (isDirty ? C.cyan : C.border),
+                  border: 'none', color: '#fff', borderRadius: 6,
+                  padding: '8px 16px', fontSize: 12, fontWeight: 700, fontFamily: 'Inter, sans-serif',
+                  cursor: (isDirty && saveState === 'idle') ? 'pointer' : 'default',
+                  opacity: (isDirty || saveState !== 'idle') ? 1 : 0.55,
+                  transition: 'background 0.2s ease',
+                  display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 165, justifyContent: 'center',
+                }}>
+                {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? '✓ Saved' : (isDirty ? 'Save Configuration' : 'Saved')}
+              </button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+              {allFactors.map(f => {
+                const cur = pendingConfig[f.k] || 'lower';
+                return (
+                  <div key={f.k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 10px', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8 }}>
+                    <span style={{ fontSize: 12, color: C.textSec, fontWeight: 500, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.label}>{f.label}</span>
+                    <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+                      <button onClick={() => cur !== 'lower' && flipPolarity(f.k)}
+                        style={{
+                          background: cur === 'lower' ? C.red : 'transparent',
+                          border: '1px solid ' + (cur === 'lower' ? C.red : C.border),
+                          color: cur === 'lower' ? '#fff' : C.textMut,
+                          borderRadius: 4, padding: '3px 8px', fontSize: 10, fontWeight: 600,
+                          cursor: 'pointer', fontFamily: 'Inter, sans-serif',
+                        }}>↓ Lower</button>
+                      <button onClick={() => cur !== 'higher' && flipPolarity(f.k)}
+                        style={{
+                          background: cur === 'higher' ? C.green : 'transparent',
+                          border: '1px solid ' + (cur === 'higher' ? C.green : C.border),
+                          color: cur === 'higher' ? '#fff' : C.textMut,
+                          borderRadius: 4, padding: '3px 8px', fontSize: 10, fontWeight: 600,
+                          cursor: 'pointer', fontFamily: 'Inter, sans-serif',
+                        }}>↑ Higher</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {isDirty && (
+              <div style={{ fontSize: 10, color: C.amber, marginTop: 10, fontStyle: 'italic' }}>
+                Pending changes — click <strong>Save Configuration</strong> to apply across the heatmaps.
+              </div>
+            )}
+          </div>
+        );
+      }
+
       return (
         <div style={{ marginTop: 24 }}>
+          {/* Phase 5.4: Polarity config panel sits ABOVE both heatmap blocks. */}
+          <PolarityConfigPanel />
           {/* Block A — Fundamental Attractiveness */}
           <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 16 }}>
             <div style={{ borderBottom: '1px solid ' + C.border, paddingBottom: 12, marginBottom: 16 }}>
@@ -1252,7 +1263,7 @@
             </div>
             {technicalFactors.map(f => <FactorBar key={f.k} f={f} />)}
             <div style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.5, fontStyle: 'italic', borderTop: '1px solid ' + C.border, paddingTop: 12 }}>
-              Z-scores are rolling: RSI/Breadth on 126d · ERP/EYBY/PE/PB on 252d · FII Fut/MCap-GDP on 756d. Color polarity is hard-coded by economic interpretation — no toggles.
+              Z-scores are rolling: RSI/Breadth on 126d · ERP/EYBY/PE/PB on 252d · FII Fut/MCap-GDP on 756d. Polarity per metric is controlled via the config panel at the top of this section (persisted in localStorage).
             </div>
           </div>
         </div>
@@ -1719,6 +1730,23 @@
       const [countdown, setCountdown] = useState(300);
       const [period, setPeriod] = useState('All');
       const [customStart, setCustomStart] = useState('');
+      // Phase 5.4 — native Refresh Data button state: 'idle' | 'refreshing' | 'done' | 'error'
+      const [refreshState, setRefreshState] = useState('idle');
+      const triggerRefresh = useCallback(() => {
+        if (refreshState === 'refreshing') return;
+        setRefreshState('refreshing');
+        // Fire-and-don't-wait against the Edge Function; server-side update-all takes 1–3 min.
+        // We optimistically flip to 'done' after ~3s (the request was accepted server-side) so the
+        // UI feels responsive. The auto-refresh countdown below will re-pull fresh data shortly after.
+        const ctl = new AbortController();
+        const timeoutId = setTimeout(() => ctl.abort(), 4000);
+        fetch(STOCKS_BASE + '?mode=update-all&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' })
+          .then(() => { clearTimeout(timeoutId); setRefreshState('done'); setTimeout(() => setRefreshState('idle'), 2200); })
+          .catch(() => { clearTimeout(timeoutId); /* AbortError after 4s = success path (server still processing) */
+            setRefreshState('done'); setTimeout(() => setRefreshState('idle'), 2200); });
+        // Also restart the per-tab countdown so we re-pull data shortly.
+        setCountdown(15);
+      }, [refreshState]);
       // Phase-2: Sector Deep Dives parent tab. Hook MUST live with the other useState calls,
       // BEFORE the `if (loading && data.length === 0) return (...)` guard further down,
       // otherwise React error #310 ("rendered more hooks than during the previous render").
@@ -2112,6 +2140,22 @@
                   style={{ marginLeft: 2, background: period === 'Date' ? C.cyan : 'transparent', border: '1px solid ' + (period === 'Date' ? C.cyan : C.border), color: period === 'Date' ? '#ffffff' : C.textSec, borderRadius: 6, padding: '3px 8px', fontSize: 11, fontFamily: 'Inter, sans-serif', outline: 'none', cursor: 'pointer' }}
                 />
               </div>
+              {/* Phase 5.4 — Native Refresh Data button. Fires update-all server-side and shows a transient loading state. */}
+              <button onClick={triggerRefresh} disabled={refreshState === 'refreshing'} title="Trigger a fresh server-side data pull (?mode=update-all)"
+                style={{
+                  background: refreshState === 'done' ? C.green : refreshState === 'refreshing' ? C.amber : 'transparent',
+                  border: '1px solid ' + (refreshState === 'done' ? C.green : refreshState === 'refreshing' ? C.amber : C.border),
+                  color: (refreshState === 'done' || refreshState === 'refreshing') ? '#ffffff' : C.textSec,
+                  borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                  cursor: refreshState === 'refreshing' ? 'wait' : 'pointer',
+                  fontFamily: 'Inter, sans-serif', display: 'flex', alignItems: 'center', gap: 5,
+                  transition: 'background 0.2s ease',
+                }}>
+                <span style={refreshState === 'refreshing' ? { display: 'inline-block', animation: 'spin 1s linear infinite' } : {}}>
+                  {refreshState === 'done' ? '✓' : '↻'}
+                </span>
+                {refreshState === 'refreshing' ? 'Refreshing…' : refreshState === 'done' ? 'Triggered' : 'Refresh Data'}
+              </button>
               <button
                 onClick={() => {
                   if (typeof XLSX === 'undefined') { alert('SheetJS not loaded'); return; }
@@ -2383,6 +2427,12 @@
           </div>
           )}
 
+          {/* Phase 5.3: Quarterly TTM EPS — sector tabs only, immediately below the ROE/PB Overlay,
+              full-width container matching the chart above, period-scoped to the master toggle. */}
+          {isSectorIndex(activeIndex) && (
+            <QuarterlyEpsChart data={data} indexLabel={indexConfig.shortLabel} period={period} customStartISO={customStartISO} />
+          )}
+
           {/* RSI + FII side-by-side (Nifty 50: FII chart; others: RSI full-width) */}
           <div className="charts-grid" style={{ marginTop: 24 }}>
             <RSIModule data={data} activeIndex={activeIndex} period={period} customStartISO={customStartISO} />
@@ -2456,12 +2506,8 @@
 
           {/* Phase-5: Quarterly EPS + PEG dual-axis chart — non-sector tabs render here (below P/E charts).
               Sector tabs render below the Relative P/E charts further down. */}
-          {!isSectorIndex(activeIndex) && (
-            <React.Fragment>
-              <DailyPegChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
-              <QuarterlyEpsChart data={data} indexLabel={indexConfig.label} period={period} customStartISO={customStartISO} />
-            </React.Fragment>
-          )}
+          {/* Phase 5.3: Daily PEG chart removed; QuarterlyEpsChart now lives ONLY in the sector branch
+              (immediately below the ROE vs P/B Overlay) per the new layout spec. */}
 
           {/* TAA Module — broad market only (sectors get Relative Valuation instead) */}
           {!isSectorIndex(activeIndex) && taaConfig && <TAAModule data={data} taaConfig={taaConfig} />}
@@ -2532,9 +2578,7 @@
                 Relative P/B (Spread) cancels out broad market beta noise and highlights true mean reversion. Absolute P/B may remain elevated during secular bull markets driven by the structural financialization of savings. The relative ratio specifically identifies when sector exuberance decouples from fundamental opportunity cost, providing a higher-conviction TAA signal.
               </p>
             </div>
-            {/* Phase-5: Quarterly EPS + PEG (sector tabs render here, below the Relative P/E pair). */}
-            <DailyPegChart data={data} indexLabel={sectorTitle} period={period} customStartISO={customStartISO} />
-            <QuarterlyEpsChart data={data} indexLabel={sectorTitle} period={period} customStartISO={customStartISO} />
+            {/* Phase 5.3: Daily PEG removed; Quarterly EPS already rendered above (under ROE/PB). */}
             </React.Fragment>
             );
           })()}
