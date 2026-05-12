@@ -373,76 +373,85 @@
     // exclusively inside the Sector Tab branch, directly below the ROE vs P/B Overlay.
 
     function QuarterlyEpsChart({ data, indexLabel, period, customStartISO }) {
-      // Period-scoped: scope the source data to the active toggle, then sample quarter-ends.
+      // Phase 5.6A — Dual EPS bars per quarter: (1) TTM EPS (cyan), (2) Discrete Quarterly EPS (purple).
+      // Both bars carry their own YoY-% label. Quarterly EPS = TTM_now − TTM_4Q_prior (single-quarter
+      // earnings increment), which is the cleanest way to back out per-quarter from a TTM stream when no
+      // discrete quarterly fundamentals feed exists.
       const filtered = useMemo(() => applyPeriodFilter(data || [], period, customStartISO), [data, period, customStartISO]);
-      // Phase 5.2 — CAGR vs YoY decision: when the active period covers > 1 year, show CAGR per bar
-      // (annualised growth from each bar back to the FIRST bar in the visible window). When 1Y or shorter,
-      // fall back to plain trailing-4Q YoY %.
-      const periodMonths = (PERIODS.find(p => p.label === period) || { months: 60 }).months;
-      const useCAGR = periodMonths > 12 && periodMonths < 999;
-      const quarterly = useMemo(() => {
+      // We need 4 quarters of TTM history BEFORE the visible window to derive discrete quarterly for the
+      // earliest visible bar. Compute the full quarter-end series from the unfiltered data, then slice.
+      const fullQuarterly = useMemo(() => {
         const buckets = {};
-        for (const r of filtered) {
+        for (const r of (data || [])) {
           const eps = deriveEps(r);
           if (eps == null) continue;
           const date = Array.isArray(r) ? r[0] : r.date;
           if (!date) continue;
           const m = +date.slice(5, 7), y = date.slice(0, 4);
           const q = Math.ceil(m / 3); const key = y + 'Q' + q;
-          if (!buckets[key] || buckets[key].date < date) buckets[key] = { date, eps, qkey: key };
+          if (!buckets[key] || buckets[key].date < date) buckets[key] = { date, ttmEps: eps, qkey: key };
         }
         const arr = Object.values(buckets).sort((a, b) => a.date.localeCompare(b.date));
-        const base = arr[0];
+        // Discrete quarterly = TTM[i] − TTM[i−4] + (avg-per-quarter on the prior TTM). Cleaner derivation:
+        //   QtrEps[i] = TTM[i] − sum(QtrEps[i−1..i−3]); seed with QtrEps[i] = TTM[i]/4 for first 4 bars.
         for (let i = 0; i < arr.length; i++) {
-          let label = null;
-          if (useCAGR) {
-            // Annualised growth from base of visible window to this bar.
-            if (base && base.eps > 0 && i > 0) {
-              const yrs = i / 4; // quarterly samples → years
-              if (yrs > 0) label = +((Math.pow(arr[i].eps / base.eps, 1 / yrs) - 1) * 100).toFixed(1);
-            }
-            arr[i].labelMode = 'CAGR';
+          if (i < 4) {
+            arr[i].qtrEps = +(arr[i].ttmEps / 4).toFixed(2); // seed estimate for warm-up window
+            arr[i].qtrEpsExact = false;
           } else {
-            // 1Y view — trailing 4Q YoY.
-            if (i >= 4) {
-              const past = arr[i - 4]?.eps;
-              if (past && past > 0) label = +(((arr[i].eps / past) - 1) * 100).toFixed(1);
-            }
-            arr[i].labelMode = 'YoY';
+            const priorThree = (arr[i-1].qtrEps || 0) + (arr[i-2].qtrEps || 0) + (arr[i-3].qtrEps || 0);
+            arr[i].qtrEps = +(arr[i].ttmEps - priorThree).toFixed(2);
+            arr[i].qtrEpsExact = true;
           }
-          arr[i].growthLabel = label;
+        }
+        // YoY% per bar: TTM uses trailing-4Q YoY; Quarterly uses YoY vs the same calendar quarter a year prior.
+        for (let i = 0; i < arr.length; i++) {
+          const past = arr[i - 4];
+          arr[i].ttmYoy = (past && past.ttmEps > 0) ? +(((arr[i].ttmEps / past.ttmEps) - 1) * 100).toFixed(1) : null;
+          arr[i].qtrYoy = (past && past.qtrEps > 0 && arr[i].qtrEps != null) ? +(((arr[i].qtrEps / past.qtrEps) - 1) * 100).toFixed(1) : null;
         }
         return arr;
-      }, [filtered, useCAGR]);
+      }, [data]);
+      // Slice to the active period window
+      const quarterly = useMemo(() => {
+        if (fullQuarterly.length === 0) return [];
+        const sliced = applyPeriodFilter(fullQuarterly, period, customStartISO);
+        return sliced;
+      }, [fullQuarterly, period, customStartISO]);
       const epsDomain = useMemo(() => {
-        const vals = quarterly.map(q => q.eps).filter(v => v != null && isFinite(v));
+        const vals = quarterly.flatMap(q => [q.ttmEps, q.qtrEps]).filter(v => v != null && isFinite(v));
         if (vals.length === 0) return [0, 1];
-        const mx = Math.max(...vals); const mn = Math.min(...vals);
+        const mx = Math.max(...vals); const mn = Math.min(...vals, 0);
         return [Math.max(0, +(mn * 0.85).toFixed(0)), +(mx * 1.15).toFixed(0)];
       }, [quarterly]);
-      const renderYoYLabel = (props) => {
+      const renderTtmLabel = (props) => {
         const { x, y, width, index } = props;
-        const q = quarterly[index]; if (!q || q.growthLabel == null) return null;
-        const fill = q.growthLabel >= 0 ? C.green : C.red;
-        return (
-          <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={10} fontWeight={600} fill={fill} fontFamily="JetBrains Mono, monospace">
-            {(q.growthLabel > 0 ? '+' : '') + q.growthLabel.toFixed(0) + '%'}
-          </text>
-        );
+        const q = quarterly[index]; if (!q || q.ttmYoy == null) return null;
+        const fill = q.ttmYoy >= 0 ? C.green : C.red;
+        return (<text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={fill} fontFamily="JetBrains Mono, monospace">{(q.ttmYoy > 0 ? '+' : '') + q.ttmYoy.toFixed(0) + '%'}</text>);
+      };
+      const renderQtrLabel = (props) => {
+        const { x, y, width, index } = props;
+        const q = quarterly[index]; if (!q || q.qtrYoy == null) return null;
+        const fill = q.qtrYoy >= 0 ? C.green : C.red;
+        return (<text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={fill} fontFamily="JetBrains Mono, monospace">{(q.qtrYoy > 0 ? '+' : '') + q.qtrYoy.toFixed(0) + '%'}</text>);
       };
       if (quarterly.length === 0) return null;
       const latest = quarterly[quarterly.length - 1];
+      const badgeText = latest
+        ? 'TTM ' + latest.ttmEps.toFixed(2) + ' · Qtr ' + (latest.qtrEps != null ? latest.qtrEps.toFixed(2) : '—')
+        : 'EPS —';
       return (
         <div style={{ marginTop: 24 }}>
           <ChartCard
-            title={(indexLabel || '') + ' — Quarterly TTM EPS'}
-            subtitle={'Trailing 12-month EPS sampled at each quarter-end · ' + (useCAGR ? 'CAGR' : 'YoY') + ' % labelled on top of every bar (period-scoped to the master toggle)'}
-            badge={latest ? 'EPS ' + latest.eps.toFixed(2) : 'EPS —'}
+            title={(indexLabel || '') + ' — Quarterly TTM EPS & Discrete Quarterly EPS'}
+            subtitle="Grouped bars per quarter-end: TTM EPS (cyan) vs. Discrete Quarterly EPS (purple) · YoY % labelled on every bar · period-scoped to master toggle"
+            badge={badgeText}
             badgeColor={C.cyan}
             badgeBg="rgba(8,145,178,0.15)"
           >
-            <ResponsiveContainer width="100%" height={360}>
-              <ComposedChart key={'eps-'+period+'-'+(indexLabel||'')} data={quarterly} margin={{ top: 24, right: 30, left: 10, bottom: 10 }}>
+            <ResponsiveContainer width="100%" height={380}>
+              <ComposedChart key={'eps-dual-'+period+'-'+(indexLabel||'')} data={quarterly} margin={{ top: 28, right: 30, left: 10, bottom: 10 }} barGap={2} barCategoryGap="20%">
                 <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
                 <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} />
                 <YAxis domain={epsDomain} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(0)} />
@@ -452,16 +461,21 @@
                   return (
                     <div style={{ background: '#fff', border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 14px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)' }}>
                       <div className="mono" style={{ fontSize: 11, color: C.textMut, marginBottom: 6 }}>{label ? fmtDate(label) : ''}</div>
-                      <div style={{ fontSize: 12, color: C.textSec }}>TTM EPS: <span className="mono" style={{ color: C.cyan, fontWeight: 600 }}>{q ? q.eps.toFixed(2) : '—'}</span></div>
-                      {q?.growthLabel != null && (
-                        <div style={{ fontSize: 11, color: q.growthLabel >= 0 ? C.green : C.red, fontWeight: 600 }}>{q.labelMode || 'YoY'}: {(q.growthLabel > 0 ? '+' : '') + q.growthLabel.toFixed(1)}%</div>
-                      )}
+                      <div style={{ fontSize: 12, color: C.textSec }}>TTM EPS: <span className="mono" style={{ color: C.cyan, fontWeight: 600 }}>{q ? q.ttmEps.toFixed(2) : '—'}</span></div>
+                      {q?.ttmYoy != null && (<div style={{ fontSize: 11, color: q.ttmYoy >= 0 ? C.green : C.red, fontWeight: 600 }}>TTM YoY: {(q.ttmYoy > 0 ? '+' : '') + q.ttmYoy.toFixed(1)}%</div>)}
+                      <div style={{ fontSize: 12, color: C.textSec, marginTop: 4 }}>Qtr EPS: <span className="mono" style={{ color: C.purple, fontWeight: 600 }}>{q && q.qtrEps != null ? q.qtrEps.toFixed(2) : '—'}</span>{q && !q.qtrEpsExact ? <span style={{ fontSize: 10, color: C.textMut, marginLeft: 4, fontStyle: 'italic' }}>(seed)</span> : null}</div>
+                      {q?.qtrYoy != null && (<div style={{ fontSize: 11, color: q.qtrYoy >= 0 ? C.green : C.red, fontWeight: 600 }}>Qtr YoY: {(q.qtrYoy > 0 ? '+' : '') + q.qtrYoy.toFixed(1)}%</div>)}
                     </div>
                   );
                 }} />
-                <Recharts.Bar dataKey="eps" fill={C.cyan} fillOpacity={0.7} barSize={Math.min(40, Math.floor(800 / Math.max(quarterly.length, 8)))} isAnimationActive={false} label={renderYoYLabel} />
+                <Recharts.Bar dataKey="ttmEps" name="TTM EPS" fill={C.cyan}   fillOpacity={0.75} barSize={Math.min(18, Math.floor(360 / Math.max(quarterly.length, 8)))} isAnimationActive={false} label={renderTtmLabel} />
+                <Recharts.Bar dataKey="qtrEps" name="Quarterly EPS" fill={C.purple} fillOpacity={0.75} barSize={Math.min(18, Math.floor(360 / Math.max(quarterly.length, 8)))} isAnimationActive={false} label={renderQtrLabel} />
               </ComposedChart>
             </ResponsiveContainer>
+            <div style={{ display: 'flex', gap: 18, marginTop: 10, fontSize: 11, color: C.textMut, flexWrap: 'wrap' }}>
+              <span><span style={{ display:'inline-block', width: 12, height: 12, background: C.cyan, opacity: 0.75, marginRight: 4, verticalAlign:'middle' }}></span>TTM EPS (rolling 12-month sum)</span>
+              <span><span style={{ display:'inline-block', width: 12, height: 12, background: C.purple, opacity: 0.75, marginRight: 4, verticalAlign:'middle' }}></span>Discrete Quarterly EPS (TTM<sub>t</sub> − ΣQtr<sub>t-1..t-3</sub>; first 4 bars seeded at TTM/4)</span>
+            </div>
           </ChartCard>
         </div>
       );
@@ -1939,7 +1953,7 @@
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
             <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + (filteredStats?.pe || EMPTY_STATS).mean + 'x'} />
             <StatCard label={indexConfig.shortLabel + " P/B"} value={current.pb} suffix="x" color={C.blue} subtext={'Mean: ' + (filteredStats?.pb || EMPTY_STATS).mean + 'x'} />
-            <StatCard label={taaConfig ? taaConfig.bondLabel : '10Y Bond Yield'} value={current.bondYield} suffix="%" color={C.amber} subtext={'Mean: ' + (filteredStats?.by || EMPTY_STATS).mean + '%'} />
+            <StatCard label={(activeCountry === 'india') ? '10Y GSEC Yield' : (taaConfig ? taaConfig.bondLabel : '10Y Bond Yield')} value={current.bondYield} suffix="%" color={C.amber} subtext={'Mean: ' + (filteredStats?.by || EMPTY_STATS).mean + '%'} />
             <StatCard label="Earnings Yield" value={current.earningsYield} suffix="%" color={C.green} subtext="Inverse of P/E" />
             <StatCard label="EYBY Spread" value={current.eyby} suffix="%"
               color={current.eyby > 0 ? C.red : C.green}
@@ -2011,7 +2025,7 @@
                   <YAxis domain={eybyDomain} ticks={eybyTicks} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + '%'} />
                   <Tooltip content={<Tip fields={[
                     { key: 'eyby', label: 'EYBY Spread', color: C.amber, suffix: '%' },
-                    { key: 'bondYield', label: taaConfig ? taaConfig.bondLabel : '10Y Bond', color: C.red, suffix: '%' },
+                    { key: 'bondYield', label: (activeCountry === 'india') ? '10Y GSEC Yield' : (taaConfig ? taaConfig.bondLabel : '10Y Bond'), color: C.red, suffix: '%' },
                     { key: 'earningsYield', label: 'Earnings Yield', color: C.green, suffix: '%' },
                   ]} />} />
                   <ReferenceLine y={0} stroke={C.textMut} strokeWidth={1.5} strokeDasharray="6 4" />
