@@ -128,6 +128,13 @@
         fiiCrowdedThreshold: 80,
         fiiCapitulationThreshold: 20,
       },
+      'nifty-capital-markets': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
       'nifty-fin-service': {
         fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
         erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
@@ -437,14 +444,14 @@
             <ResponsiveContainer width="100%" height={360}>
               <ComposedChart key={'eps-'+period+'-'+(indexLabel||'')} data={quarterly} margin={{ top: 24, right: 30, left: 10, bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
-                <XAxis dataKey="date" tickFormatter={d => { const dt = new Date(d); return 'Q' + Math.ceil((dt.getMonth()+1)/3) + " '" + String(dt.getFullYear()).slice(2); }} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} />
+                <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} />
                 <YAxis domain={epsDomain} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(0)} />
                 <Tooltip content={({active, payload, label}) => {
                   if (!active || !payload?.length) return null;
                   const q = quarterly.find(x => x.date === label);
                   return (
                     <div style={{ background: '#fff', border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 14px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)' }}>
-                      <div className="mono" style={{ fontSize: 11, color: C.textMut, marginBottom: 6 }}>{q?.qkey || label}</div>
+                      <div className="mono" style={{ fontSize: 11, color: C.textMut, marginBottom: 6 }}>{label ? fmtDate(label) : ''}</div>
                       <div style={{ fontSize: 12, color: C.textSec }}>TTM EPS: <span className="mono" style={{ color: C.cyan, fontWeight: 600 }}>{q ? q.eps.toFixed(2) : '—'}</span></div>
                       {q?.growthLabel != null && (
                         <div style={{ fontSize: 11, color: q.growthLabel >= 0 ? C.green : C.red, fontWeight: 600 }}>{q.labelMode || 'YoY'}: {(q.growthLabel > 0 ? '+' : '') + q.growthLabel.toFixed(1)}%</div>
@@ -960,315 +967,11 @@
       return { label: 'Neutral', color: '#d97706', score: avg };
     }
 
-    function TAAModule({ data, taaConfig }) {
-      const [weights, setWeights] = useState(TAA_DEFAULT_WEIGHTS);
-      const [slope, setSlope] = useState(() => {
-        try { const s = JSON.parse(localStorage.getItem('taa_slope')); return (typeof s === 'number') ? s : 0.25; } catch(e) { return 0.25; }
-      });
-      const [valMode, setValMode] = useState(() => {
-        try { const m = localStorage.getItem('taa_val_mode'); return m === 'eyby' ? 'eyby' : 'erp'; } catch(e) { return 'erp'; }
-      });
-
-      // Restore saved weights from localStorage on mount
-      useEffect(() => {
-        try {
-          const saved = JSON.parse(localStorage.getItem('taa_weights'));
-          if (saved && typeof saved === 'object') {
-            const valid = {};
-            for (const k of Object.keys(TAA_DEFAULT_WEIGHTS)) {
-              valid[k] = (typeof saved[k] === 'number' && saved[k] >= 0 && saved[k] <= 1) ? saved[k] : TAA_DEFAULT_WEIGHTS[k];
-            }
-            setWeights(valid);
-          }
-        } catch(e) {}
-      }, []);
-
-      // Enrich data with derived RSI / proxies for not-yet-wired fields
-      // Skip enrichment if data is already in enriched format (US indices)
-      const rich = useMemo(() => (needsEnrichment(data) ? enrichTaaInputs(data) : data), [data]);
-
-      // Build signal arrays (ERP or EYBY as valuation anchor, mutually exclusive)
-      const sig = useMemo(() => {
-        if (!rich || rich.length < 60) return null;
-        const arr = {
-          rsi: rich.map(d => (d.rsi14 != null ? d.rsi14 - 50 : null)),
-          fii_fut: rich.map(d => d.fii_fut_net_long),
-          erp: rich.map(d => d.erp),
-          eyby: rich.map(d => d.eyby != null ? d.eyby : null),
-          breadth: rich.map(d => d.breadth),
-          mcap_gdp: rich.map(d => d.mcap_gdp),
-        };
-        const z_rsi_raw  = rollingZ(arr.rsi, 126);
-        const z_fii_raw  = rollingZ(arr.fii_fut, 756);
-        const z_erp      = rollingZ(arr.erp, 252);
-        // EYBY: positive = bonds favored (bearish for equities), so invert
-        const z_eyby_raw = rollingZ(arr.eyby, 252);
-        const z_eyby     = z_eyby_raw.map(v => v == null ? null : -v);
-        const z_breadth  = rollingZ(arr.breadth, 126);
-        const z_mcap_raw = rollingZ(arr.mcap_gdp, 756);
-        const z_rsi      = z_rsi_raw.map(v => v == null ? null : -v);
-        const z_fii      = z_fii_raw.map(v => v == null ? null : -v);
-        const z_mcap_gdp = z_mcap_raw.map(v => v == null ? null : -v);
-        const { mean: erpMean, std: erpStd } = rollingMeanStd(arr.erp, 252);
-        return {
-          z_rsi, z_fii, z_erp, z_eyby, z_breadth, z_mcap_gdp,
-          fii_raw: arr.fii_fut, mcap_raw: arr.mcap_gdp, erp_raw: arr.erp,
-          erpMean, erpStd,
-        };
-      }, [rich]);
-
-      // Effective weights: zero out inactive valuation signal
-      const effWeights = useMemo(() => {
-        const ew = { ...weights };
-        if (valMode === 'erp') { ew.eyby = 0; }
-        else { ew.erp = 0; }
-        return ew;
-      }, [weights, valMode]);
-
-      // Composite z and equity weight series
-      const weightSeries = useMemo(() => {
-        if (!sig) return [];
-        const n = rich.length;
-        const out = new Array(n).fill(0.5);
-        for (let i = 0; i < n; i++) {
-          const zby = {
-            rsi: sig.z_rsi[i], fii_fut: sig.z_fii[i], erp: sig.z_erp[i],
-            eyby: sig.z_eyby[i],
-            breadth: sig.z_breadth[i], mcap_gdp: sig.z_mcap_gdp[i],
-          };
-          const cz = calculateCompositeZ(zby, effWeights);
-          let w = mapZToWeight(cz, slope);
-          // Overlays — thresholds from taaConfig
-          const fii = sig.fii_raw[i], mcap = sig.mcap_raw[i];
-          const erp = sig.erp_raw[i], em = sig.erpMean[i], es = sig.erpStd[i];
-          const mcapHot = taaConfig ? taaConfig.mcapGdpHotThreshold : 110;
-          const fiiCrowded = taaConfig ? taaConfig.fiiCrowdedThreshold : 80;
-          const fiiCapit = taaConfig ? taaConfig.fiiCapitulationThreshold : 20;
-          if (fii != null && mcap != null && fii > fiiCrowded && mcap > mcapHot) {
-            w = Math.min(w, 0.30);
-          }
-          if (fii != null && erp != null && em != null && es != null &&
-              fii < fiiCapit && erp > em + es) {
-            w = Math.max(w, 0.90);
-          }
-          out[i] = w;
-        }
-        return out;
-      }, [sig, rich, effWeights, slope]);
-
-      const backtest = useMemo(() => {
-        if (!rich || rich.length < 60) return null;
-        return runTaaBacktest(rich, weightSeries, { txnBps: 5, cashAnnual: 0.065 });
-      }, [rich, weightSeries]);
-
-      const latest = useMemo(() => {
-        if (!sig || !rich.length) return null;
-        const i = rich.length - 1;
-        const zby = {
-          rsi: sig.z_rsi[i], fii_fut: sig.z_fii[i], erp: sig.z_erp[i],
-          eyby: sig.z_eyby[i],
-          breadth: sig.z_breadth[i], mcap_gdp: sig.z_mcap_gdp[i],
-        };
-        const cz = calculateCompositeZ(zby, effWeights);
-        const w = weightSeries[i] != null ? weightSeries[i] : mapZToWeight(cz, slope);
-        return { zby, cz, w, fii: sig.fii_raw[i], mcap: sig.mcap_raw[i], erp: sig.erp_raw[i] };
-      }, [sig, rich, effWeights, slope, weightSeries]);
-
-      // Phase-4: 90-day EPS Momentum factor (zero-API derived) — Derived EPS = Close / P/E.
-      // Compute ROC vs the same metric 90 trading days back, then z-score it on a 252-day rolling window.
-      const epsMomentumSeries = useMemo(() => {
-        if (!rich || rich.length === 0) return [];
-        const eps = rich.map(d => (d.close && d.pe && d.pe > 0) ? (d.close / d.pe) : null);
-        const lag = 63; // 63 trading days ≈ 90 calendar days
-        const roc = eps.map((v, i) => {
-          if (i < lag || v == null) return null;
-          const past = eps[i - lag]; if (past == null || past <= 0) return null;
-          return ((v / past) - 1) * 100;
-        });
-        return roc;
-      }, [rich]);
-      const z_eps_momentum = useMemo(() => rollingZ(epsMomentumSeries, 252), [epsMomentumSeries]);
-      const epsMomentumLatest = useMemo(() => {
-        const arr = epsMomentumSeries; if (!arr.length) return null;
-        for (let i = arr.length - 1; i >= 0; i--) if (arr[i] != null && Number.isFinite(arr[i])) return arr[i];
-        return null;
-      }, [epsMomentumSeries]);
-
-      // Phase-5: Direction toggles REMOVED. Color polarity is hard-coded by economic semantics:
-      //   High EYBY/ERP → Green (cheap)   ;   High P/E, P/B, MCap/GDP → Red (expensive)
-      //   High RSI → Red (overbought)     ;   High FII Fut → Red (crowded)   ;   High Breadth → Green
-      const i = rich && rich.length ? rich.length - 1 : -1;
-      const peLatest = (rich && i >= 0) ? rich[i].pe : null;
-      const pbLatest = (rich && i >= 0) ? rich[i].pb : null;
-      // Derive PE/PB z-scores on the fly (rolling 252d) so they can join the heatmap directly.
-      const peSeries = useMemo(() => (rich || []).map(d => d?.pe), [rich]);
-      const pbSeries = useMemo(() => (rich || []).map(d => d?.pb), [rich]);
-      const z_pe = useMemo(() => rollingZ(peSeries, 252), [peSeries]);
-      const z_pb = useMemo(() => rollingZ(pbSeries, 252), [pbSeries]);
-
-      // Block A — Fundamental Attractiveness (5 factors, polarity hard-coded).
-      // Phase 5.3 — POLARITY INVERTED ACROSS THE BOARD. Per the contrarian framework, every metric is
-      // treated as inverse: a high absolute value pushes the indicator LEFT (Red/Bearish). bullishHigh is
-      // hardcoded to false on every factor below — including EYBY, ERP, and Breadth (which previously
-      // mapped high → green). Slider math (FactorBar) multiplies z by polarity (-1) before plotting.
-      const fundamentalFactors = [
-        { k: 'eyby',     label: 'EYBY (Earnings Yield ÷ Bond Yield)', rawZ: i >= 0 && sig ? sig.z_eyby[i] : null,                    rawValue: rich && i >= 0 ? rich[i].eyby : null, suffix: '%', bullishHigh: false, help: 'Contrarian view — high absolute reading flagged Red.' },
-        { k: 'erp',      label: 'Equity Risk Premium',                rawZ: i >= 0 && sig ? sig.z_erp[i] : null,                     rawValue: latest ? latest.erp : null,            suffix: '%', bullishHigh: false, help: 'Contrarian view — high absolute reading flagged Red.' },
-        { k: 'pe',       label: 'P/E Ratio',                          rawZ: i >= 0 ? z_pe[i] : null,                                 rawValue: peLatest,                              suffix: 'x', bullishHigh: false, help: 'Higher = expensive earnings → Red/Bearish.' },
-        { k: 'pb',       label: 'P/B Ratio',                          rawZ: i >= 0 ? z_pb[i] : null,                                 rawValue: pbLatest,                              suffix: 'x', bullishHigh: false, help: 'Higher = expensive book value → Red/Bearish.' },
-        { k: 'mcap_gdp', label: 'Market Cap / GDP',                   rawZ: i >= 0 && sig ? sig.z_mcap_gdp[i] : null,                rawValue: latest ? latest.mcap : null,           suffix: '%', bullishHigh: false, help: 'Buffett Indicator — high absolute reading → Red/Bearish.' },
-      ];
-      // Block B — Technical Signals (3 factors). All inverse per Phase 5.3 polarity rule.
-      const technicalFactors = [
-        { k: 'rsi',     label: 'RSI-14',                              rawZ: i >= 0 && sig ? sig.z_rsi[i] : null,    rawValue: rich && i >= 0 ? rich[i].rsi14 : null, suffix: '',  bullishHigh: false, help: 'Higher = overbought → Red.' },
-        { k: 'fii_fut', label: 'FII Index Fut Net Long',              rawZ: i >= 0 && sig ? sig.z_fii[i] : null,    rawValue: latest ? latest.fii : null,            suffix: '%', bullishHigh: false, help: 'Higher = crowded long / froth → Red.' },
-        { k: 'breadth', label: 'Breadth (% > 200 DMA)',               rawZ: i >= 0 && sig ? sig.z_breadth[i] : null,rawValue: rich && i >= 0 ? rich[i].breadth : null,suffix: '%', bullishHigh: false, help: 'Contrarian view — high reading flagged Red.' },
-      ];
-      // Phase 5.4 — Dynamic polarity configuration engine.
-      // Default: every metric set to 'lower' (high reading → Red/Bearish). User can override per-metric
-      // via the config panel; clicking a toggle updates `pendingConfig`, Save commits to `gaugeConfig`
-      // and persists to localStorage. Math: 'lower' → flip z (z * -1), 'higher' → use z directly.
-      const GAUGE_CONFIG_KEY = 'taa_gauge_polarity_v1';
-      const DEFAULT_GAUGE_CONFIG = { eyby: 'lower', erp: 'lower', pe: 'lower', pb: 'lower', mcap_gdp: 'lower', rsi: 'lower', fii_fut: 'lower', breadth: 'lower' };
-      const [gaugeConfig, setGaugeConfig] = useState(() => {
-        try {
-          const stored = JSON.parse(localStorage.getItem(GAUGE_CONFIG_KEY) || 'null');
-          if (stored && typeof stored === 'object') return { ...DEFAULT_GAUGE_CONFIG, ...stored };
-        } catch (_e) {}
-        return { ...DEFAULT_GAUGE_CONFIG };
-      });
-      const [pendingConfig, setPendingConfig] = useState(gaugeConfig);
-      const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'saved'
-      const isDirty = Object.keys(pendingConfig).some(k => pendingConfig[k] !== gaugeConfig[k]);
-      const flipPolarity = (k) => setPendingConfig(prev => ({ ...prev, [k]: prev[k] === 'lower' ? 'higher' : 'lower' }));
-      const saveConfig = () => {
-        setSaveState('saving');
-        setGaugeConfig(pendingConfig);
-        try { localStorage.setItem(GAUGE_CONFIG_KEY, JSON.stringify(pendingConfig)); } catch (_e) {}
-        setTimeout(() => setSaveState('saved'), 200);
-        setTimeout(() => setSaveState('idle'), 1800);
-      };
-
-      function FactorBar({ f }) {
-        const z = (f.rawZ != null && Number.isFinite(+f.rawZ)) ? +f.rawZ : null;
-        // Phase 5.4: read polarity from live gaugeConfig (NOT the hardcoded bullishHigh on the factor row).
-        // 'lower' (default) → high z pushed Left/Red. 'higher' → high z pushed Right/Green.
-        const polarity = gaugeConfig[f.k] || 'lower';
-        const effZ = z != null ? (polarity === 'higher' ? z : -z) : null;
-        const pos = effZ != null ? Math.max(0, Math.min(100, 50 + effZ * 25)) : 50;
-        const valStr = (f.rawValue != null && Number.isFinite(+f.rawValue))
-          ? ((+f.rawValue).toFixed(f.suffix === 'x' ? 2 : f.suffix === '%' ? 2 : 1) + (f.suffix || ''))
-          : 'n/a';
-        return (
-          <div style={{ marginBottom: 14 }} title={f.help || ''}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, color: C.textSec, fontWeight: 500 }}>
-                {f.label}
-                <span className="mono" style={{ marginLeft: 8, fontSize: 11, color: C.textMut }}>({valStr})</span>
-                <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 600, color: polarity === 'lower' ? C.red : C.green, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  {polarity === 'lower' ? '↓ lower is better' : '↑ higher is better'}
-                </span>
-              </span>
-              <span className="mono" style={{ fontSize: 11, color: C.textMut }}>{z != null ? z.toFixed(2) + 'σ' : '—'}</span>
-            </div>
-            <div style={{ position: 'relative', height: 12, background: 'linear-gradient(90deg, #dc2626 0%, #fde68a 50%, #16a34a 100%)', borderRadius: 6, opacity: z != null ? 1 : 0.4 }}>
-              {z != null && (
-                <div style={{ position: 'absolute', left: pos + '%', top: -3, width: 3, height: 18, background: '#1e293b', transform: 'translateX(-50%)', borderRadius: 1, boxShadow: '0 1px 3px rgba(0,0,0,0.35)' }} />
-              )}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: C.textMut, marginTop: 4 }}>
-              <span>Bearish</span><span>Neutral</span><span>Bullish</span>
-            </div>
-          </div>
-        );
-      }
-
-      // Phase 5.4 — Polarity config panel. Renders all 8 metrics with two-button toggles. Save commits to localStorage.
-      const allFactors = [...fundamentalFactors, ...technicalFactors];
-      function PolarityConfigPanel() {
-        return (
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid ' + C.border, paddingBottom: 12, marginBottom: 14 }}>
-              <div>
-                <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Gauge Polarity Configuration</div>
-                <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>Set whether a HIGH reading should render Red (Lower is Better, contrarian) or Green (Higher is Better, directional) per metric. Saved per-browser via localStorage.</div>
-              </div>
-              <button onClick={saveConfig} disabled={!isDirty || saveState !== 'idle'}
-                style={{
-                  background: saveState === 'saved' ? C.green : (isDirty ? C.cyan : C.border),
-                  border: 'none', color: '#fff', borderRadius: 6,
-                  padding: '8px 16px', fontSize: 12, fontWeight: 700, fontFamily: 'Inter, sans-serif',
-                  cursor: (isDirty && saveState === 'idle') ? 'pointer' : 'default',
-                  opacity: (isDirty || saveState !== 'idle') ? 1 : 0.55,
-                  transition: 'background 0.2s ease',
-                  display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 165, justifyContent: 'center',
-                }}>
-                {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? '✓ Saved' : (isDirty ? 'Save Configuration' : 'Saved')}
-              </button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-              {allFactors.map(f => {
-                const cur = pendingConfig[f.k] || 'lower';
-                return (
-                  <div key={f.k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 10px', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8 }}>
-                    <span style={{ fontSize: 12, color: C.textSec, fontWeight: 500, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.label}>{f.label}</span>
-                    <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-                      <button onClick={() => cur !== 'lower' && flipPolarity(f.k)}
-                        style={{
-                          background: cur === 'lower' ? C.red : 'transparent',
-                          border: '1px solid ' + (cur === 'lower' ? C.red : C.border),
-                          color: cur === 'lower' ? '#fff' : C.textMut,
-                          borderRadius: 4, padding: '3px 8px', fontSize: 10, fontWeight: 600,
-                          cursor: 'pointer', fontFamily: 'Inter, sans-serif',
-                        }}>↓ Lower</button>
-                      <button onClick={() => cur !== 'higher' && flipPolarity(f.k)}
-                        style={{
-                          background: cur === 'higher' ? C.green : 'transparent',
-                          border: '1px solid ' + (cur === 'higher' ? C.green : C.border),
-                          color: cur === 'higher' ? '#fff' : C.textMut,
-                          borderRadius: 4, padding: '3px 8px', fontSize: 10, fontWeight: 600,
-                          cursor: 'pointer', fontFamily: 'Inter, sans-serif',
-                        }}>↑ Higher</button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {isDirty && (
-              <div style={{ fontSize: 10, color: C.amber, marginTop: 10, fontStyle: 'italic' }}>
-                Pending changes — click <strong>Save Configuration</strong> to apply across the heatmaps.
-              </div>
-            )}
-          </div>
-        );
-      }
-
-      return (
-        <div style={{ marginTop: 24 }}>
-          {/* Phase 5.4: Polarity config panel sits ABOVE both heatmap blocks. */}
-          <PolarityConfigPanel />
-          {/* Block A — Fundamental Attractiveness */}
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 16 }}>
-            <div style={{ borderBottom: '1px solid ' + C.border, paddingBottom: 12, marginBottom: 16 }}>
-              <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>A. Fundamental Attractiveness</div>
-              <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>These indicators and a view on forward earnings will determine medium-term positioning.</div>
-            </div>
-            {fundamentalFactors.map(f => <FactorBar key={f.k} f={f} />)}
-          </div>
-          {/* Block B — Technical Signals */}
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24 }}>
-            <div style={{ borderBottom: '1px solid ' + C.border, paddingBottom: 12, marginBottom: 16 }}>
-              <div style={{ fontSize: 14, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>B. Technical Signals</div>
-              <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>If technicals are weak but fundamentals are getting attractive, there is a strong case for scaling into investments.</div>
-            </div>
-            {technicalFactors.map(f => <FactorBar key={f.k} f={f} />)}
-            <div style={{ fontSize: 11, color: C.textMut, marginTop: 10, lineHeight: 1.5, fontStyle: 'italic', borderTop: '1px solid ' + C.border, paddingTop: 12 }}>
-              Z-scores are rolling: RSI/Breadth on 126d · ERP/EYBY/PE/PB on 252d · FII Fut/MCap-GDP on 756d. Polarity per metric is controlled via the config panel at the top of this section (persisted in localStorage).
-            </div>
-          </div>
-        </div>
-      );
-    }
+    // Phase 5.5 — TAAModule (heatmaps + PolarityConfigPanel + gaugeConfig state) removed in full per the
+    // UI-simplification spec. The Fundamental Attractiveness and Technical Signals blocks were deleted along
+    // with their FactorBar renderer and the localStorage polarity persistence. Replace with a no-op stub so
+    // any vestigial reference fails loudly at the call site rather than producing dead heatmap visuals.
+    function TAAModule() { return null; }
 
     // =====================================================================
     // STOCKS DASHBOARD — consolidated multi-stock framework
@@ -2427,11 +2130,9 @@
           </div>
           )}
 
-          {/* Phase 5.3: Quarterly TTM EPS — sector tabs only, immediately below the ROE/PB Overlay,
-              full-width container matching the chart above, period-scoped to the master toggle. */}
-          {isSectorIndex(activeIndex) && (
-            <QuarterlyEpsChart data={data} indexLabel={indexConfig.shortLabel} period={period} customStartISO={customStartISO} />
-          )}
+          {/* Phase 5.5: Quarterly TTM EPS — rendered on ALL tabs (Nifty 50, all sectors, all globals).
+              Sits immediately below the main valuation charts and is period-scoped to the master toggle. */}
+          <QuarterlyEpsChart data={data} indexLabel={indexConfig.shortLabel} period={period} customStartISO={customStartISO} />
 
           {/* RSI + FII side-by-side (Nifty 50: FII chart; others: RSI full-width) */}
           <div className="charts-grid" style={{ marginTop: 24 }}>
@@ -2510,7 +2211,7 @@
               (immediately below the ROE vs P/B Overlay) per the new layout spec. */}
 
           {/* TAA Module — broad market only (sectors get Relative Valuation instead) */}
-          {!isSectorIndex(activeIndex) && taaConfig && <TAAModule data={data} taaConfig={taaConfig} />}
+          {/* Phase 5.5: TAAModule (heatmaps + Polarity Config Panel) removed per UI-simplification spec. */}
 
           {/* Relative Valuation Ratio Charts — every sector tab vs Nifty 50 baseline */}
           {isSectorIndex(activeIndex) && ratioChartData.length > 0 && (() => {
