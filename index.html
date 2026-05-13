@@ -1006,7 +1006,45 @@
     // Phase-5: India Macro Hub — maps the dual GDP equation:
     //   GVA (Agri + Industry + Services) = GDP = Expenditure (C + I + G + Net Exports)
     // Backed by /functions/v1/nse-data-proxy?mode=india-macro (FRED + Yahoo proxies).
-    function IndiaMacroHub({ indiaMacro }) {
+    // Phase 5.6B — Re-usable Mean / ±1σ / ±2σ line chart with institutional styling. Used by both Macro Hubs.
+    function MacroBandChart({ title, data, dataKey, color, suffix, source, note, valueFormatter, height }) {
+      const series = (data || []).filter(d => d && d[dataKey] != null && isFinite(d[dataKey]));
+      if (series.length === 0) return null;
+      const vals = series.map(d => d[dataKey]);
+      const stats = vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
+      const latest = series[series.length-1][dataKey];
+      const vf = valueFormatter || (v => (v >= 0 ? '+' : '') + (+v).toFixed(2) + suffix);
+      return (
+        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>{title}</h3>
+            <span className="mono" style={{ fontSize: 13, fontWeight: 700, color }}>{vf(latest)}</span>
+          </div>
+          <ResponsiveContainer width="100%" height={height || 280}>
+            <ComposedChart data={series} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+              <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(series.length / 10))} stroke={C.grid} />
+              <YAxis tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + (suffix||'')} />
+              <Tooltip content={<Tip fields={[{ key: dataKey, label: title.split(' — ')[0], color, suffix: suffix||'' }]} />} />
+              <ReferenceLine y={stats.sd2Upper} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+2σ (' + fmt2(stats.sd2Upper) + ')', position: 'insideTopRight',    fill: C.red,    fontSize: 10 }} />
+              <ReferenceLine y={stats.sd1Upper} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+1σ (' + fmt2(stats.sd1Upper) + ')', position: 'insideTopRight',    fill: C.amber,  fontSize: 10 }} />
+              <ReferenceLine y={stats.mean}     stroke={C.purple} strokeWidth={1.5} strokeDasharray="3 3" label={{ value: 'Mean ('+ fmt2(stats.mean)     + ')', position: 'insideTopRight',    fill: C.purple, fontSize: 10 }} />
+              <ReferenceLine y={stats.sd1Lower} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−1σ (' + fmt2(stats.sd1Lower) + ')', position: 'insideBottomRight', fill: C.amber,  fontSize: 10 }} />
+              <ReferenceLine y={stats.sd2Lower} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '−2σ (' + fmt2(stats.sd2Lower) + ')', position: 'insideBottomRight', fill: C.red,    fontSize: 10 }} />
+              <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          {(note || source) && (
+            <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(148,163,184,0.06)', borderLeft: '3px solid ' + color, borderRadius: '0 6px 6px 0' }}>
+              {note && <p style={{ fontSize: 12, lineHeight: 1.55, color: C.textSec, margin: 0 }}>{note}</p>}
+              <p className="mono" style={{ fontSize: 11, color: C.textMut, margin: '6px 0 0' }}>μ={fmt2(stats.mean)}{suffix||''} · σ={fmt2(stats.sd)}{suffix||''} · n={vals.length}{source ? ' · '+source : ''}</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function IndiaMacroHub({ indiaMacro, indiaExtras }) {
       if (!indiaMacro) {
         return (<div style={{ padding: '60px 24px', textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading India macro data…</div>);
       }
@@ -1065,7 +1103,7 @@
           </div>
 
           {/* Block 3: Monetary Backdrop */}
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20 }}>
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
             <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
               Monetary Backdrop
             </div>
@@ -1074,12 +1112,80 @@
               <Cell label="Short-Term Rate Δ (RBI proxy)" sub={mon.repo?.source} val={mon.repo?.latest} yoy={mon.repo?.yoy} color={tone(-(mon.repo?.yoy ?? 0))} hideRawIndex />
             </div>
           </div>
+
+          {/* Phase 5.6B — Block 4: GDP Component Heatmap (PFCE / GFCF / GFCE quarterly YoY). */}
+          {indiaExtras?.gdpComponents && (() => {
+            const gdpC = indiaExtras.gdpComponents;
+            const heatColor = (v) => {
+              if (v == null || !isFinite(v)) return '#cbd5e1';
+              // Map YoY % onto a red→amber→green gradient. Clamp at ±15%.
+              const x = Math.max(-15, Math.min(15, v));
+              if (x >= 0) {
+                const t = x / 15; // 0..1
+                const r = Math.round(245 - 165*t), g = Math.round(158 + 64*t), b = Math.round(11 + 63*t);
+                return 'rgb(' + r + ',' + g + ',' + b + ')';
+              } else {
+                const t = -x / 15;
+                const r = Math.round(245 + 0*t), g = Math.round(158 - 100*t), b = Math.round(11 + 27*t);
+                return 'rgb(' + r + ',' + g + ',' + b + ')';
+              }
+            };
+            const components = [
+              { k: 'pfce', tag: 'PFCE' },
+              { k: 'gfcf', tag: 'GFCF' },
+              { k: 'gfce', tag: 'GFCE' },
+            ];
+            return (
+              <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+                <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                  GDP Component Heatmap — Quarterly YoY
+                </div>
+                <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, fontStyle: 'italic' }}>
+                  Red = contraction / sub-trend growth · Green = expansion. Latest quarter highlighted; trailing 8 quarters shown across each row.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '160px repeat(8, 1fr)', gap: 4, fontSize: 11 }}>
+                  <div></div>
+                  {components[0] && (gdpC[components[0].k]?.series || []).slice(-8).map((q, i) => (
+                    <div key={'hdr-'+i} style={{ textAlign: 'center', color: C.textMut, fontSize: 10, padding: '2px 0' }}>{q.date ? fmtDate(q.date) : ''}</div>
+                  ))}
+                  {components.map(comp => {
+                    const series = (gdpC[comp.k]?.series || []).slice(-8);
+                    const label = gdpC[comp.k]?.label || comp.tag;
+                    return (
+                      <React.Fragment key={comp.k}>
+                        <div style={{ fontSize: 11, color: C.textSec, fontWeight: 600, display: 'flex', alignItems: 'center', paddingRight: 8 }}>{label}</div>
+                        {Array.from({ length: 8 }).map((_, i) => {
+                          const q = series[i];
+                          const v = q?.value;
+                          return (
+                            <div key={comp.k+'-'+i} title={q ? (q.date + ' · ' + (v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'}
+                              style={{ background: q ? heatColor(v) : 'transparent', color: q && Math.abs(v) > 5 ? '#fff' : C.text, borderRadius: 4, padding: '8px 4px', textAlign: 'center', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace', minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', border: q ? 'none' : '1px dashed ' + C.border }}>
+                              {q ? (v >= 0 ? '+' : '') + v.toFixed(1) + '%' : '—'}
+                            </div>
+                          );
+                        })}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 10, color: C.textMut, marginTop: 10, fontStyle: 'italic' }}>
+                  PFCE = Private Final Consumption Expenditure · GFCF = Gross Fixed Capital Formation (Capex) · GFCE = Government Final Consumption Expenditure. Data: FRED quarterly series, computed as 4-quarter YoY%.
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Phase 5.6B — Block 5: Macro Pipeline charts (M2, India MCap, Manufacturing PMI, Capacity Utilization) */}
+          <MacroBandChart title="India M2 Money Supply (INR Cr)" data={indiaExtras?.m2?.series} dataKey="value" color={C.cyan} suffix="" source="FRED MYAGM2INM189N" note="M2 broad money. Acceleration in M2 growth tends to lead equity multiple expansion by 6–12 months." valueFormatter={v => (+v).toFixed(0)} />
+          <MacroBandChart title="India Total Market Cap (Nifty Total Market Index)" data={indiaExtras?.marketCap?.series} dataKey="value" color={C.blue} suffix="" source="Yahoo ^CRSLDX" note="Nifty Total Market index close as a proxy for India's aggregate equity market cap. Compare against M2 to gauge market-cap-to-money ratio." valueFormatter={v => (+v).toFixed(0)} />
+          <MacroBandChart title="Manufacturing PMI Proxy (IIP 12M ROC)" data={indiaExtras?.pmi?.series} dataKey="value" color={C.amber} suffix="%" source="FRED INDPROINDMISMEI · 12M ROC" note="IIP 12-month rate of change as a manufacturing-activity proxy (no free PMI API). >0 = expansion, <0 = contraction. Watch for SD-extreme readings flagging cycle turning points." />
+          <MacroBandChart title="Capacity Utilization Proxy" data={indiaExtras?.capUtil?.series} dataKey="value" color={C.green} suffix="%" source="6M MA of IIP YoY, mapped to 60–80% CU band centered on 70%" note="Capacity Utilization proxy from a 6-month moving average of IIP YoY, scaled to the typical 60–80% RBI OBICUS band. Readings >75% historically pressure margins and accelerate capex cycles." />
         </div>
       );
     }
 
     // Phase-4: Global Macro Hub — replaces the Phase-3 sticky ribbon with 3 dedicated historical charts.
-    function GlobalMacroHub({ macroHistory }) {
+    function GlobalMacroHub({ macroHistory, globalExtras }) {
       if (!macroHistory) {
         return (<div style={{ padding: '60px 24px', textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading global macro history…</div>);
       }
@@ -1093,6 +1199,13 @@
         { key: 'curve', title: 'US 10Y-2Y Yield Curve Spread', dataKey: 'value',  suffix: '%', color: C.purple,
           data: (macroHistory.yieldCurve || []).filter(d => d && d.value != null),
           note: 'Leading macro indicator. Inversion (negative) signals recession risk; steepening (positive) signals economic reflation or late-cycle dynamics.' },
+        // Phase 5.6B — Global liquidity (Fed Balance Sheet, $T) + Global market cap (MSCI World ETF NAV proxy).
+        ...(globalExtras?.liquidity?.series ? [{ key: 'liq', title: 'Global Liquidity — Fed Balance Sheet (US$T)', dataKey: 'value', suffix: 'T', color: C.green,
+          data: (globalExtras.liquidity.series || []).filter(d => d && d.value != null),
+          note: 'Fed Balance Sheet (FRED WALCL) as a global liquidity proxy. Rising = QE / liquidity injection; falling = QT / tightening cycle, typically headwind for risk assets.' }] : []),
+        ...(globalExtras?.marketCap?.series ? [{ key: 'gmcap', title: 'Global MCap — MSCI World ETF (URTH)', dataKey: 'value', suffix: '', color: C.blue,
+          data: (globalExtras.marketCap.series || []).filter(d => d && d.value != null),
+          note: 'iShares MSCI World ETF close price proxies the world-equity market-cap regime. Compare alongside DXY and yield curve to triangulate global risk appetite.' }] : []),
       ];
       return (
         <div>
@@ -1471,12 +1584,16 @@
       const [gdpFactors, setGdpFactors] = useState(null);
       const [macroHistory, setMacroHistory] = useState(null);
       const [indiaMacro, setIndiaMacro] = useState(null);
-      // Phase-3 GDP factors + Phase-4 macro-history + Phase-5 india-macro fetch — MUST live above loading-guard.
+      const [globalExtras, setGlobalExtras] = useState(null);
+      const [indiaExtras, setIndiaExtras] = useState(null);
+      // Phase-3/4/5 + Phase 5.6B macro pipelines (global-extras, india-extras) fetched alongside.
       useEffect(() => {
         const f = () => {
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=gdp-factors').then(r => r.json()).then(setGdpFactors).catch(() => {});
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=macro-history').then(r => r.json()).then(setMacroHistory).catch(() => {});
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=india-macro').then(r => r.json()).then(setIndiaMacro).catch(() => {});
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=global-extras').then(r => r.json()).then(setGlobalExtras).catch(() => {});
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=india-extras').then(r => r.json()).then(setIndiaExtras).catch(() => {});
         };
         f();
         const t = setInterval(f, 3600 * 1000);
@@ -1571,7 +1688,20 @@
         return applyPeriodFilter(data, period, customStartISO);
       }, [data, period, customStartISO]);
 
-      const current = filtered.length > 0 ? filtered[filtered.length - 1] : { date:'', pe:0, pb:0, bondYield:0, earningsYield:0, eyby:0 };
+      // Phase 5.6B Hotfix — Capital Markets uses NSE CSV snapshots which don't ship the 10Y G-Sec yield
+      // alongside PE/PB. To prevent stale or null bond-yield flicker, inherit Nifty 50's most-recent
+      // bondYield as the authoritative India 10Y G-Sec. Applies to any Indian index whose own latest
+      // bondYield is missing.
+      const _rawCurrent = filtered.length > 0 ? filtered[filtered.length - 1] : { date:'', pe:0, pb:0, bondYield:0, earningsYield:0, eyby:0 };
+      const _nifty50Cache = dataCache['nifty50'] || [];
+      const _nifty50LatestBy = (_nifty50Cache.length > 0 ? (
+        Array.isArray(_nifty50Cache[_nifty50Cache.length - 1])
+          ? _nifty50Cache[_nifty50Cache.length - 1][3]
+          : (_nifty50Cache[_nifty50Cache.length - 1].bondYield ?? _nifty50Cache[_nifty50Cache.length - 1].by_yield)
+      ) : null);
+      const current = (activeCountry === 'india' && (_rawCurrent.bondYield == null || _rawCurrent.bondYield === 0) && _nifty50LatestBy != null)
+        ? { ..._rawCurrent, bondYield: _nifty50LatestBy }
+        : _rawCurrent;
 
       // ERP chart data (Forward EY - G-Sec) and FII proxy for side-by-side with RSI
       // Skip enrichment if data is already in enriched format (US indices)
@@ -1948,7 +2078,7 @@
           {/* Phase-5: GDP Factor Matrix card REMOVED from sector tabs — moved into the dedicated INDIA MACRO tab. */}
 
           {/* Phase-5: India Macro Hub takes over when in india-macro country. Phase-4 Global Macro Hub same. */}
-          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} /> : (<React.Fragment>
+          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} indiaExtras={indiaExtras} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} globalExtras={globalExtras} /> : (<React.Fragment>
           {/* KPI Cards — Phase-5: added EpsGrowthCard with 1Y/2Y/3Y/4Y/5Y/7Y/10Y toggle */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
             <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + (filteredStats?.pe || EMPTY_STATS).mean + 'x'} />
