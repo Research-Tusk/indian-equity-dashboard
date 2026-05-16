@@ -1168,7 +1168,184 @@
       );
     }
 
-    function IndiaMacroHub({ indiaMacro, indiaExtras, sectorWeights }) {
+    // Phase 5.9 — Spread chart: plots two series + their spread on a single time axis. The spread
+    // line is the headline read (e.g. Nominal GDP YoY − Repo). Latest spread is highlighted in the header.
+    function MacroSpreadChart({ title, data, lineKeyA, lineKeyB, spreadKey, labelA, labelB, spreadLabel, colorA, colorB, colorSpread, source, note, height }) {
+      const series = (data || []).filter(d => d && d[spreadKey] != null && isFinite(d[spreadKey]));
+      if (series.length === 0) {
+        return (
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>{title}</h3>
+            <div style={{ padding: '28px 0', color: C.textMut, fontSize: 13 }}>Awaiting series data…</div>
+          </div>
+        );
+      }
+      const latest = series[series.length - 1];
+      const spreadVal = latest[spreadKey];
+      const tone = spreadVal > 0 ? C.green : spreadVal < 0 ? C.red : C.textMut;
+      return (
+        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>{title}</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.textMut }}>
+                <span style={{ display: 'inline-block', width: 10, height: 2, background: colorA }}></span>{labelA}
+                <span style={{ display: 'inline-block', width: 10, height: 2, background: colorB, marginLeft: 8 }}></span>{labelB}
+              </span>
+              <span className="mono" style={{ fontSize: 13, fontWeight: 700, padding: '4px 10px', background: tone + '22', border: '1px solid ' + tone, color: tone, borderRadius: 6 }}>
+                {spreadLabel}: {(spreadVal > 0 ? '+' : '') + spreadVal.toFixed(2)}%
+              </span>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={height || 300}>
+            <ComposedChart data={series} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+              <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(series.length / 10))} stroke={C.grid} />
+              <YAxis tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(1) + '%'} />
+              <Tooltip content={({ active, payload, label }) => {
+                if (!active || !payload || !payload.length) return null;
+                const row = payload[0]?.payload || {};
+                return (
+                  <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: 10, fontSize: 12 }}>
+                    <div className="mono" style={{ color: C.textMut, marginBottom: 6 }}>{label ? fmtDate(label) : ''}</div>
+                    <div style={{ color: colorA }}><span className="mono">{labelA}:</span> <span className="mono">{row[lineKeyA]?.toFixed(2)}%</span></div>
+                    <div style={{ color: colorB }}><span className="mono">{labelB}:</span> <span className="mono">{row[lineKeyB]?.toFixed(2)}%</span></div>
+                    <div style={{ color: colorSpread, marginTop: 2 }}><span className="mono">{spreadLabel}:</span> <span className="mono">{row[spreadKey]?.toFixed(2)}%</span></div>
+                  </div>
+                );
+              }} />
+              <ReferenceLine y={0} stroke={C.textMut} strokeWidth={1} strokeDasharray="3 3" />
+              <Line type="monotone" dataKey={lineKeyA} stroke={colorA} strokeWidth={1.5} dot={false} isAnimationActive={false} strokeDasharray="4 2" />
+              <Line type="monotone" dataKey={lineKeyB} stroke={colorB} strokeWidth={1.5} dot={false} isAnimationActive={false} strokeDasharray="4 2" />
+              <Line type="monotone" dataKey={spreadKey} stroke={colorSpread} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          {(note || source) && (
+            <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(148,163,184,0.06)', borderLeft: '3px solid ' + tone, borderRadius: '0 6px 6px 0' }}>
+              {note && <p style={{ fontSize: 12, lineHeight: 1.55, color: C.textSec, margin: 0 }}>{note}</p>}
+              <p className="mono" style={{ fontSize: 11, color: C.textMut, margin: '6px 0 0' }}>Latest: {labelA} {latest[lineKeyA]?.toFixed(2)}% · {labelB} {latest[lineKeyB]?.toFixed(2)}% · Spread {(spreadVal > 0 ? '+' : '') + spreadVal.toFixed(2)}%{source ? ' · ' + source : ''}</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Phase 5.9 — Dual-axis chart: monthly FII + DII net flows (left axis, Rs Crore) with Nifty 50
+    // close overlaid on the right axis. Highlights monthly netting since FIIs and DIIs net out daily noise.
+    function FlowsChart({ title, flows, niftySeries, source, note, height }) {
+      const monthlyFlows = (flows?.monthly || []).filter(p => p && p.month != null);
+      if (monthlyFlows.length === 0) {
+        return (
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>{title}</h3>
+            <div style={{ padding: '28px 0', color: C.textMut, fontSize: 13 }}>Awaiting FII/DII data…</div>
+          </div>
+        );
+      }
+      // Inner-join with Nifty 50 monthly close (last available trading day of each month).
+      const niftyByMonth = new Map();
+      for (const p of (niftySeries || [])) {
+        if (!p || p.date == null) continue;
+        const ym = p.date.slice(0, 7);
+        const cur = niftyByMonth.get(ym);
+        if (!cur || cur.date < p.date) niftyByMonth.set(ym, p);
+      }
+      const chartData = monthlyFlows.map(p => {
+        const ym = p.month.slice(0, 7);
+        const n = niftyByMonth.get(ym);
+        return { date: p.month, fii: p.fiiNet, dii: p.diiNet, net: +(p.fiiNet + p.diiNet).toFixed(2), nifty: n ? n.value : null };
+      }).filter(p => p.nifty != null);
+      const latest = chartData[chartData.length - 1];
+      const fiiTone = latest?.fii >= 0 ? C.green : C.red;
+      const diiTone = latest?.dii >= 0 ? C.green : C.red;
+      return (
+        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>{title}</h3>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <span className="mono" style={{ fontSize: 12, padding: '4px 8px', background: fiiTone + '22', color: fiiTone, borderRadius: 6 }}>FII {(latest?.fii > 0 ? '+' : '') + (latest?.fii || 0).toFixed(0)} Cr</span>
+              <span className="mono" style={{ fontSize: 12, padding: '4px 8px', background: diiTone + '22', color: diiTone, borderRadius: 6 }}>DII {(latest?.dii > 0 ? '+' : '') + (latest?.dii || 0).toFixed(0)} Cr</span>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={height || 320}>
+            <ComposedChart data={chartData} margin={{ top: 10, right: 50, left: 10, bottom: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+              <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(chartData.length / 10))} stroke={C.grid} />
+              <YAxis yAxisId="left" tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => (v/1000).toFixed(0) + 'k Cr'} label={{ value: 'Monthly Net Flow (Rs Cr)', angle: -90, position: 'insideLeft', fill: C.textMut, fontSize: 11, offset: -5 }} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: C.cyan }} stroke={C.cyan} tickFormatter={v => v.toFixed(0)} label={{ value: 'Nifty 50', angle: 90, position: 'insideRight', fill: C.cyan, fontSize: 11, offset: -5 }} />
+              <Tooltip content={({ active, payload, label }) => {
+                if (!active || !payload || !payload.length) return null;
+                const row = payload[0]?.payload || {};
+                return (
+                  <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: 10, fontSize: 12 }}>
+                    <div className="mono" style={{ color: C.textMut, marginBottom: 6 }}>{label ? fmtDate(label) : ''}</div>
+                    <div style={{ color: row.fii >= 0 ? C.green : C.red }}>FII: <span className="mono">{row.fii > 0 ? '+' : ''}{row.fii?.toFixed(0)} Cr</span></div>
+                    <div style={{ color: row.dii >= 0 ? C.green : C.red }}>DII: <span className="mono">{row.dii > 0 ? '+' : ''}{row.dii?.toFixed(0)} Cr</span></div>
+                    <div style={{ color: row.net >= 0 ? C.green : C.red }}>Total: <span className="mono">{row.net > 0 ? '+' : ''}{row.net?.toFixed(0)} Cr</span></div>
+                    <div style={{ color: C.cyan, marginTop: 2 }}>Nifty 50: <span className="mono">{row.nifty?.toFixed(0)}</span></div>
+                  </div>
+                );
+              }} />
+              <ReferenceLine yAxisId="left" y={0} stroke={C.textMut} strokeWidth={1} strokeDasharray="3 3" />
+              <Recharts.Bar yAxisId="left" dataKey="fii" name="FII Net" fill={C.amber} fillOpacity={0.7} isAnimationActive={false} />
+              <Recharts.Bar yAxisId="left" dataKey="dii" name="DII Net" fill={C.purple} fillOpacity={0.7} isAnimationActive={false} />
+              <Line yAxisId="right" type="monotone" dataKey="nifty" stroke={C.cyan} strokeWidth={2} dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          {(note || source) && (
+            <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(148,163,184,0.06)', borderLeft: '3px solid ' + C.cyan, borderRadius: '0 6px 6px 0' }}>
+              {note && <p style={{ fontSize: 12, lineHeight: 1.55, color: C.textSec, margin: 0 }}>{note}</p>}
+              <p className="mono" style={{ fontSize: 11, color: C.textMut, margin: '6px 0 0' }}>{source}</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Phase 5.9 — SIP inflows bar chart with running ATH highlight.
+    function SipBarChart({ title, data, color, source, note, height }) {
+      const series = (data || []).filter(d => d && d.value != null);
+      if (series.length === 0) return null;
+      const latest = series[series.length - 1];
+      const ath = Math.max(...series.map(p => p.value));
+      const isAth = latest.value >= ath - 1;
+      return (
+        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>{title}</h3>
+            <span className="mono" style={{ fontSize: 13, fontWeight: 700, padding: '4px 10px', background: color + '22', border: '1px solid ' + color, color, borderRadius: 6 }}>
+              ₹{(latest.value/1000).toFixed(2)}k Cr {isAth ? '· ATH' : ''}
+            </span>
+          </div>
+          <ResponsiveContainer width="100%" height={height || 260}>
+            <ComposedChart data={series} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+              <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(series.length / 12))} stroke={C.grid} />
+              <YAxis tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => (v/1000).toFixed(0) + 'k'} />
+              <Tooltip content={({ active, payload, label }) => {
+                if (!active || !payload || !payload.length) return null;
+                const v = payload[0]?.value;
+                return (
+                  <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: 10, fontSize: 12 }}>
+                    <div className="mono" style={{ color: C.textMut, marginBottom: 4 }}>{label ? fmtDate(label) : ''}</div>
+                    <div style={{ color }}><span className="mono">₹{v?.toLocaleString('en-IN')} Cr</span></div>
+                  </div>
+                );
+              }} />
+              <Recharts.Bar dataKey="value" fill={color} fillOpacity={0.85} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          {(note || source) && (
+            <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(148,163,184,0.06)', borderLeft: '3px solid ' + color, borderRadius: '0 6px 6px 0' }}>
+              {note && <p style={{ fontSize: 12, lineHeight: 1.55, color: C.textSec, margin: 0 }}>{note}</p>}
+              <p className="mono" style={{ fontSize: 11, color: C.textMut, margin: '6px 0 0' }}>ATH ₹{(ath/1000).toFixed(2)}k Cr · n={series.length}{source ? ' · ' + source : ''}</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function IndiaMacroHub({ indiaMacro, indiaExtras, sectorWeights, longOnly }) {
       if (!indiaMacro) {
         return (<div style={{ padding: '60px 24px', textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading India macro data…</div>);
       }
@@ -1386,35 +1563,104 @@
           <MacroBandChart title="Manufacturing PMI — IIP 12M ROC (historical band)" data={indiaExtras?.pmi?.series} dataKey="value" color={C.amber} suffix="%" source="FRED INDPROINDMISMEI · 12M ROC + live HSBC India Mfg PMI via TradingEconomics" note="Historical band = IIP YoY (manufacturing-activity proxy). Latest spot HSBC PMI is shown in the headline tile above. >0 / >50 = expansion." />
           <MacroBandChart title="Services PMI Proxy — Nifty Services 12M ROC" data={(indiaExtras?.pmi?.series || []).map(p => ({ date: p.date, value: p.value }))} dataKey="value" color={C.cyan} suffix="%" source="Frontend-derived; live HSBC India Services PMI via TradingEconomics (headline tile above)" note="The dashboard does not yet store historical HSBC Services PMI; band uses the manufacturing-activity proxy as a coincident reading while we surface the live HSBC Services PMI spot value in the tile above." />
           <MacroBandChart title="Capacity Utilization — 6M IIP MA + live RBI OBICUS" data={indiaExtras?.capUtil?.series} dataKey="value" color={C.green} suffix="%" source="6M MA of IIP YoY (band) + live RBI OBICUS via TradingEconomics" note="Band = 6-month MA of IIP YoY scaled to the 60–80% RBI OBICUS range. Latest official OBICUS print is shown in the headline tile above. >75% historically accelerates capex cycles." />
+
+          {/* Phase 5.9 — Long-Only Strategy Indicators (Morgan Stanley framework). */}
+          <div style={{ marginTop: 32, paddingTop: 24, borderTop: '2px solid ' + C.border }}>
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>Long-Only Strategy Indicators</h2>
+            <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 20px' }}>
+              Morgan-Stanley-style equity-positioning signals: nominal-growth surplus over the cost of capital, cross-country real-rate edge,
+              institutional flow regime, and the domestic SIP liquidity floor.
+            </p>
+            {longOnly?.nomGdpRepoSpread?.series && (
+              <MacroSpreadChart
+                title="Nominal GDP YoY vs. RBI Repo Rate"
+                data={longOnly.nomGdpRepoSpread.series}
+                lineKeyA="nomGdp" lineKeyB="repo" spreadKey="value"
+                labelA="Nominal GDP YoY" labelB="Repo Rate" spreadLabel="Spread"
+                colorA={C.green} colorB={C.amber} colorSpread={C.blue}
+                source="FRED NGDPNSAXDCINQ quarterly YoY · FRED INDIR3TIB01STM (3M interbank, monthly proxy for repo)"
+                note="A widening positive spread = nominal growth running ahead of the cost of capital, the cleanest equity-buy signal in the MS framework. Spread compression toward zero historically precedes derating cycles."
+              />
+            )}
+            {longOnly?.realRateDiff?.series && (
+              <CorrelationChart
+                title="Real Policy Rate Differential — India vs. US"
+                seriesA={longOnly.realRateIndia?.series}
+                seriesB={longOnly.realRateUS?.series}
+                labelA="India Real Rate"
+                labelB="US Real Rate"
+                colorA={C.cyan}
+                colorB={C.amber}
+                source="FRED INDIR3TIB01STM − INDCPIALLMINMEI YoY · FRED DFF − CPIAUCSL YoY"
+                note={'Phase 5.9 — Latest differential (India − US): ' + ((longOnly.realRateDiff.series[longOnly.realRateDiff.series.length-1]?.value > 0 ? '+' : '') + (longOnly.realRateDiff.series[longOnly.realRateDiff.series.length-1]?.value?.toFixed(2) || '—')) + '%. A wider positive India−US real-rate gap historically pulls in FII flows and supports the Rupee.'}
+              />
+            )}
+            {longOnly?.flows && (
+              <FlowsChart
+                title="FII / DII Monthly Net Flows vs. Nifty 50"
+                flows={longOnly.flows}
+                niftySeries={longOnly.flows?.nifty50}
+                source={longOnly?.sources?.flows || 'Moneycontrol fii_dii_activity (monthly net cash market flows, Rs Cr)'}
+                note="DII (mutual funds + insurance + retail) flows have structurally absorbed FII selling since 2021 — making the FII−DII balance the cleanest gauge of who is setting the marginal price."
+              />
+            )}
+            {longOnly?.sip?.series && (
+              <SipBarChart
+                title="Monthly SIP Inflows — AMFI Press Releases"
+                data={longOnly.sip.series}
+                color={C.purple}
+                source={longOnly?.sources?.sip || 'AMFI monthly SIP contribution press releases'}
+                note="SIP inflows are the structural domestic liquidity floor for Indian equities. Each new ATH raises the bar for FIIs trying to push the market lower; rolling 12M SIP collections now exceed cumulative FII outflows in most pull-back regimes."
+              />
+            )}
+            {longOnly?.equityAum && longOnly.equityAum.latest && (
+              <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Equity Mutual Fund AUM (Latest)</div>
+                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>{longOnly?.sources?.equityAum || 'AMFI monthly AAUM press releases'}</div>
+                  </div>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: C.green }}>
+                    ₹{((longOnly.equityAum.latest.value || 0)/100000).toFixed(2)} Lakh Cr
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       );
     }
 
     // Phase-4: Global Macro Hub — replaces the Phase-3 sticky ribbon with 3 dedicated historical charts.
-    function GlobalMacroHub({ macroHistory, globalExtras }) {
+    // Phase 5.9 hotfix — accepts master `period` and `customStartISO` props and routes them through
+    // applyPeriodFilter() so the 1Y/3Y/5Y/10Y/All/Date toggle correctly slices DXY, USD/JPY, yield curve,
+    // and the Liquidity↔MCap correlation chart.
+    function GlobalMacroHub({ macroHistory, globalExtras, period, customStartISO }) {
       if (!macroHistory) {
         return (<div style={{ padding: '60px 24px', textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading global macro history…</div>);
       }
+      const liqSliced  = applyPeriodFilter((globalExtras?.liquidity?.series || []).filter(d => d && d.value != null), period, customStartISO);
+      const mcapSliced = applyPeriodFilter((globalExtras?.marketCap?.series || []).filter(d => d && d.value != null), period, customStartISO);
       const charts = [
         { key: 'dxy',   title: 'DXY — 12M Rate of Change',    dataKey: 'roc12m', suffix: '%', color: C.cyan,
-          data: (macroHistory.dxy || []).filter(d => d && d.roc12m != null),
+          data: applyPeriodFilter((macroHistory.dxy || []).filter(d => d && d.roc12m != null), period, customStartISO),
           note: 'Measures Dollar liquidity. A rising DXY signals tightening global financial conditions and risk-off sentiment for Emerging Markets.' },
         { key: 'jpy',   title: 'USD/JPY — 12M Rate of Change', dataKey: 'roc12m', suffix: '%', color: C.amber,
-          data: (macroHistory.usdjpy || []).filter(d => d && d.roc12m != null),
+          data: applyPeriodFilter((macroHistory.usdjpy || []).filter(d => d && d.roc12m != null), period, customStartISO),
           note: 'Tracks Yen Carry Trade dynamics. A rapidly strengthening Yen (negative ROC) flags global carry trade unwinds and institutional de-risking.' },
         { key: 'curve', title: 'US 10Y-2Y Yield Curve Spread', dataKey: 'value',  suffix: '%', color: C.purple,
-          data: (macroHistory.yieldCurve || []).filter(d => d && d.value != null),
+          data: applyPeriodFilter((macroHistory.yieldCurve || []).filter(d => d && d.value != null), period, customStartISO),
           note: 'Leading macro indicator. Inversion (negative) signals recession risk; steepening (positive) signals economic reflation or late-cycle dynamics.' },
       ];
       return (
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>Global Macro Hub</h2>
-          <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 24px' }}>10-year history of the three institutional macro signals.</p>
+          <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 24px' }}>Period: <span className="mono" style={{ color: C.text, fontWeight: 600 }}>{period || 'All'}</span>{period === 'Date' && customStartISO ? <span className="mono"> (since {customStartISO})</span> : null} — institutional macro signals filtered to the master time toggle.</p>
           {/* Phase 5.7 — Combined Global Liquidity (WALCL + ECB) ↔ Global MCap (URTH) correlation. */}
           <CorrelationChart
             title="Global Liquidity ↔ Global MCap (URTH)"
-            seriesA={globalExtras?.liquidity?.series}
-            seriesB={globalExtras?.marketCap?.series}
+            seriesA={liqSliced}
+            seriesB={mcapSliced}
             labelA="Liquidity ($T)"
             labelB="MSCI World"
             colorA={C.green}
@@ -1799,6 +2045,8 @@
       const [indiaExtras, setIndiaExtras] = useState(null);
       // Phase 5.7 — Nifty 50 sector composition (count-based weights from niftyindices.com constituent CSV).
       const [sectorWeights, setSectorWeights] = useState(null);
+      // Phase 5.9 — Long-only strategy indicators (real rates, NomGDP-Repo spread, FII/DII flows, SIP, AUM).
+      const [longOnly, setLongOnly] = useState(null);
       // Phase-3/4/5 + Phase 5.6B macro pipelines (global-extras, india-extras) fetched alongside.
       useEffect(() => {
         const f = () => {
@@ -1809,6 +2057,8 @@
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=india-extras').then(r => r.json()).then(setIndiaExtras).catch(() => {});
           // Phase 5.7 — Sector weights (Nifty 50 default — donut updates monthly with index rebalance).
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=sector-weights&index=nifty50').then(r => r.json()).then(setSectorWeights).catch(() => {});
+          // Phase 5.9 — Long-only strategy indicators pipeline.
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=long-only').then(r => r.json()).then(setLongOnly).catch(() => {});
         };
         f();
         const t = setInterval(f, 3600 * 1000);
@@ -2293,7 +2543,7 @@
           {/* Phase-5: GDP Factor Matrix card REMOVED from sector tabs — moved into the dedicated INDIA MACRO tab. */}
 
           {/* Phase-5: India Macro Hub takes over when in india-macro country. Phase-4 Global Macro Hub same. */}
-          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} indiaExtras={indiaExtras} sectorWeights={sectorWeights} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} globalExtras={globalExtras} /> : (<React.Fragment>
+          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} indiaExtras={indiaExtras} sectorWeights={sectorWeights} longOnly={longOnly} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} globalExtras={globalExtras} period={period} customStartISO={customStartISO} /> : (<React.Fragment>
           {/* KPI Cards — Phase-5: added EpsGrowthCard with 1Y/2Y/3Y/4Y/5Y/7Y/10Y toggle */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
             <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + (filteredStats?.pe || EMPTY_STATS).mean + 'x'} />
