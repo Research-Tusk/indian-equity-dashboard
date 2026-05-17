@@ -73,6 +73,10 @@
     const COUNTRY_INDICES = {
       india: [
         { id: 'nifty50',                label: 'Nifty 50',              shortLabel: 'Nifty 50' },
+        { id: 'nifty-next-50',          label: 'Nifty Next 50',         shortLabel: 'Next 50' },
+        { id: 'nifty-midcap-150',       label: 'Nifty Midcap 150',      shortLabel: 'Midcap 150' },
+        { id: 'nifty-smallcap-250',     label: 'Nifty Smallcap 250',    shortLabel: 'Smallcap 250' },
+        { id: 'nifty-microcap-250',     label: 'Nifty Microcap 250',    shortLabel: 'Microcap 250' },
         { id: 'nifty-capital-markets',  label: 'Nifty Capital Markets', shortLabel: 'Capital Markets' },
         { id: 'nifty-fin-service',      label: 'Nifty Financial Services', shortLabel: 'Financials' },
         { id: 'nifty-energy',           label: 'Nifty Energy',          shortLabel: 'Energy' },
@@ -108,6 +112,7 @@
 
     // Phase-4: every sector tab (capital-markets + 9 flat sectors) renders the lean Capital Markets template.
     const SECTOR_INDEX_IDS = new Set([
+      'nifty-next-50','nifty-midcap-150','nifty-smallcap-250','nifty-microcap-250',
       'nifty-capital-markets',
       'nifty-fin-service','nifty-energy','nifty-it','nifty-auto','nifty-fmcg',
       'nifty-pharma','nifty-infra','nifty-commodities','nifty-services-sector',
@@ -134,6 +139,36 @@
         erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
         bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy for sector participation.',
         mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Historically, readings >110% cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      // Phase 6 — 4 new broad-market Nifty indices. Reuse the macro-proxy template since they don't have
+      // bespoke FII positioning feeds either; threshold = 110 for India equity valuation regime.
+      'nifty-next-50': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No segment-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy.',
+        mcapGdpExplainer: 'The Buffett Indicator, adjusted for India. Readings >110% historically cap 3-year forward returns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-midcap-150': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No segment-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy.',
+        mcapGdpExplainer: 'Midcaps typically run hotter than large-caps; readings >120% on the Buffett Indicator historically front-load cyclical drawdowns.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-smallcap-250': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No segment-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy.',
+        mcapGdpExplainer: 'Smallcaps are the highest-beta segment; valuations >30x P/E historically precede deep drawdowns on liquidity tightening.',
+        mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
+      },
+      'nifty-microcap-250': {
+        fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No segment-specific FII data; Nifty 50 positioning is used as a macro proxy.',
+        erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
+        bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Nifty 500 breadth used as a macro proxy.',
+        mcapGdpExplainer: 'Microcaps are illiquid and dominated by retail flows; SIP inflow trends are the cleanest forward-look on demand.',
         mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
       },
       'nifty-fin-service': {
@@ -1345,7 +1380,10 @@
       );
     }
 
-    function IndiaMacroHub({ indiaMacro, indiaExtras, sectorWeights, longOnly }) {
+    function IndiaMacroHub({ indiaMacro, indiaExtras, sectorWeights, longOnly, period, customStartISO }) {
+      // Phase 6 — Wire master period toggle into every band chart inside the hub. Filters all historical
+      // arrays (PMI, Cap Util, GDP expenditure, GVA production) so the SD bands recompute on slice.
+      const sliceFilter = (arr) => applyPeriodFilter(arr || [], period, customStartISO);
       if (!indiaMacro) {
         return (<div style={{ padding: '60px 24px', textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading India macro data…</div>);
       }
@@ -1481,32 +1519,40 @@
             );
           })()}
 
-          {/* Phase 5.7 — Live PMI / Cap Util headline tiles from TradingEconomics scrape. */}
-          {(indiaExtras?.livePmi || indiaExtras?.liveCapUtil) && (() => {
-            const lp = indiaExtras.livePmi || {};
-            const lcu = indiaExtras.liveCapUtil || {};
-            const headlineTile = (label, value, prev, asOf, tone, source) => (
-              <div style={{ padding: 16, borderRadius: 10, background: '#fff', border: '1px solid ' + C.border, minHeight: 96 }}>
-                <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{label}</div>
-                <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: tone, marginTop: 4 }}>{value != null ? value.toFixed(2) : '—'}</div>
-                <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Prev: <span className="mono">{prev != null ? prev.toFixed(2) : '—'}</span>{asOf ? ' · ' + asOf : ''}</div>
-                <div style={{ fontSize: 10, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>{source}</div>
-              </div>
-            );
-            const pmiTone = (v) => v == null ? C.textMut : (v >= 50 ? C.green : C.red);
-            const cuTone  = (v) => v == null ? C.textMut : (v >= 75 ? C.green : v >= 70 ? C.amber : C.red);
+          {/* Phase 6 — Three side-by-side continuous activity band charts (Mfg PMI proxy, Services proxy, Cap Util).
+              The live HSBC spot readings (when present) are surfaced as the badge in each card header so users
+              still see the latest official print alongside the historical SD-band context. */}
+          {(indiaExtras?.pmi?.series || indiaExtras?.capUtil?.series) && (() => {
+            const lp = indiaExtras?.livePmi || {};
+            const lcu = indiaExtras?.liveCapUtil || {};
+            const fmtBadge = (label, val) => val != null ? label + ': ' + val.toFixed(1) : null;
             return (
-              <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-                <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-                  Live Activity Readings — HSBC PMI &amp; RBI OBICUS
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                  Activity Pulse — HSBC PMI &amp; RBI OBICUS (continuous, time-toggle aware)
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-                  {headlineTile('Manufacturing PMI', lp.manufacturing?.value, lp.manufacturing?.previous, lp.manufacturing?.asOf, pmiTone(lp.manufacturing?.value), lp.manufacturing?.source)}
-                  {headlineTile('Services PMI',      lp.services?.value,      lp.services?.previous,      lp.services?.asOf,      pmiTone(lp.services?.value),      lp.services?.source)}
-                  {headlineTile('Capacity Utilization (RBI OBICUS)', lcu.value, lcu.previous, lcu.asOf, cuTone(lcu.value), lcu.source)}
-                </div>
-                <div style={{ fontSize: 10, color: C.textMut, marginTop: 10, fontStyle: 'italic' }}>
-                  PMI &gt; 50 = expansion, &lt; 50 = contraction. Cap Util &gt; 75% historically pressures margins and pulls forward capex; OBICUS is published quarterly with a one-quarter lag.
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
+                  <MacroBandChart
+                    title={'Manufacturing PMI' + (lp.manufacturing?.value != null ? ' · live ' + lp.manufacturing.value.toFixed(1) : '')}
+                    data={sliceFilter(indiaExtras?.pmi?.series)} dataKey="value" color={C.amber} suffix="%"
+                    source="FRED INDPROINDMISMEI 12M ROC (manufacturing-activity proxy) · live HSBC India Mfg PMI via TradingEconomics"
+                    note={'Historical band = IIP YoY (mfg-activity proxy). Live HSBC PMI spot: ' + (lp.manufacturing?.value != null ? lp.manufacturing.value.toFixed(2) + (lp.manufacturing.asOf ? ' (' + lp.manufacturing.asOf + ')' : '') : 'n/a') + '. >0 / >50 = expansion.'}
+                    height={240}
+                  />
+                  <MacroBandChart
+                    title={'Services PMI' + (lp.services?.value != null ? ' · live ' + lp.services.value.toFixed(1) : '')}
+                    data={sliceFilter(indiaExtras?.pmi?.series)} dataKey="value" color={C.cyan} suffix="%"
+                    source="Frontend-derived (uses IIP proxy as coincident); live HSBC India Services PMI via TradingEconomics"
+                    note={'Live HSBC Services PMI spot: ' + (lp.services?.value != null ? lp.services.value.toFixed(2) + (lp.services.asOf ? ' (' + lp.services.asOf + ')' : '') : 'n/a') + '. >50 = expansion.'}
+                    height={240}
+                  />
+                  <MacroBandChart
+                    title={'Capacity Utilization' + (lcu.value != null ? ' · live ' + lcu.value.toFixed(1) + '%' : '')}
+                    data={sliceFilter(indiaExtras?.capUtil?.series)} dataKey="value" color={C.green} suffix="%"
+                    source="6M MA of IIP YoY mapped to 60–80% RBI OBICUS band · live OBICUS via TradingEconomics"
+                    note={'Live RBI OBICUS spot: ' + (lcu.value != null ? lcu.value.toFixed(2) + '%' + (lcu.asOf ? ' (' + lcu.asOf + ')' : '') : 'n/a') + '. >75% historically accelerates capex cycles.'}
+                    height={240}
+                  />
                 </div>
               </div>
             );
@@ -1560,9 +1606,36 @@
             source="FRED MABMM301INA189N (annual M3) × Yahoo ^CRSLDX (daily Nifty Total Market)"
             note="Phase 5.7 — Co-movement between India's M3 broad-money base and aggregate equity market cap. Sustained R² > 0.6 means liquidity expansion is the dominant driver of multiple re-rating; weakening R² flags valuation divergence."
           />
-          <MacroBandChart title="Manufacturing PMI — IIP 12M ROC (historical band)" data={indiaExtras?.pmi?.series} dataKey="value" color={C.amber} suffix="%" source="FRED INDPROINDMISMEI · 12M ROC + live HSBC India Mfg PMI via TradingEconomics" note="Historical band = IIP YoY (manufacturing-activity proxy). Latest spot HSBC PMI is shown in the headline tile above. >0 / >50 = expansion." />
-          <MacroBandChart title="Services PMI Proxy — Nifty Services 12M ROC" data={(indiaExtras?.pmi?.series || []).map(p => ({ date: p.date, value: p.value }))} dataKey="value" color={C.cyan} suffix="%" source="Frontend-derived; live HSBC India Services PMI via TradingEconomics (headline tile above)" note="The dashboard does not yet store historical HSBC Services PMI; band uses the manufacturing-activity proxy as a coincident reading while we surface the live HSBC Services PMI spot value in the tile above." />
-          <MacroBandChart title="Capacity Utilization — 6M IIP MA + live RBI OBICUS" data={indiaExtras?.capUtil?.series} dataKey="value" color={C.green} suffix="%" source="6M MA of IIP YoY (band) + live RBI OBICUS via TradingEconomics" note="Band = 6-month MA of IIP YoY scaled to the 60–80% RBI OBICUS range. Latest official OBICUS print is shown in the headline tile above. >75% historically accelerates capex cycles." />
+          {/* Phase 6 — GDP — EXPENDITURE (DEMAND) block: PFCE, GFCF, GFCE, Net Exports continuous lines. */}
+          {indiaExtras?.gdpComponents && (
+            <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid ' + C.border, marginBottom: 20 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>GDP — Expenditure (Demand)</h3>
+              <p style={{ fontSize: 12, color: C.textMut, margin: '0 0 14px' }}>Quarterly YoY growth of the four demand-side aggregates that sum to GDP. Net Exports omitted — FRED does not publish a high-frequency India X−M series.</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
+                <MacroBandChart title="PFCE — Private Consumption" data={sliceFilter(indiaExtras.gdpComponents.pfce?.series)} dataKey="value" color={C.cyan} suffix="%" source={indiaExtras.gdpComponents.pfce?.source} note="Largest component (~58% of measured aggregates). YoY contraction = consumer demand stress." height={240} />
+                <MacroBandChart title="GFCF — Capex / Investment" data={sliceFilter(indiaExtras.gdpComponents.gfcf?.series)} dataKey="value" color={C.purple} suffix="%" source={indiaExtras.gdpComponents.gfcf?.source} note="Capex cycle proxy. Acceleration through the SD bands = corporate confidence flowing into new capacity." height={240} />
+                <MacroBandChart title="GFCE — Government Spending" data={sliceFilter(indiaExtras.gdpComponents.gfce?.series)} dataKey="value" color={C.amber} suffix="%" source={indiaExtras.gdpComponents.gfce?.source} note="Counter-cyclical buffer. Sharp upside surprises typically front-load fiscal stimulus." height={240} />
+                <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: 280 }}>
+                  <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Net Exports (X−M)</div>
+                  <div className="mono" style={{ fontSize: 18, fontWeight: 600, color: C.textMut, marginTop: 8 }}>—</div>
+                  <p style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic', textAlign: 'center', maxWidth: 320, marginTop: 8 }}>FRED does not expose a quarterly India X−M series. RBI publishes monthly trade-balance figures via DBIE but only as PDF — no free, structured feed currently exists.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Phase 6 — GVA — GROSS VALUE ADDED (PRODUCTION) block: Agriculture, Industry, Services lines. */}
+          {indiaExtras?.gva && (
+            <div style={{ marginTop: 12, marginBottom: 20 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>GVA — Gross Value Added (Production)</h3>
+              <p style={{ fontSize: 12, color: C.textMut, margin: '0 0 14px' }}>Supply-side decomposition of growth. Industry uses IIP 12M YoY (monthly); Services uses Nifty Services 12M YoY (daily, resampled monthly); Agriculture uses WB annual real-GDP-growth proxy.</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
+                <MacroBandChart title="Agriculture" data={sliceFilter(indiaExtras.gva.agriculture?.series)} dataKey="value" color={C.green} suffix="%" source={indiaExtras.gva.agriculture?.source} note="Sparse annual proxy (WB real GDP). Best read as a regime indicator, not a high-frequency signal." height={240} />
+                <MacroBandChart title="Industry (IIP YoY)" data={sliceFilter(indiaExtras.gva.industry?.series)} dataKey="value" color={C.amber} suffix="%" source={indiaExtras.gva.industry?.source} note="Monthly Industrial Production YoY. Crosses below 0 = factory-output contraction; above +5% = strong cyclical upswing." height={240} />
+                <MacroBandChart title="Services (Nifty Services YoY)" data={sliceFilter(indiaExtras.gva.services?.series)} dataKey="value" color={C.blue} suffix="%" source={indiaExtras.gva.services?.source} note="Equity-market-based services activity proxy (Nifty Services index 12-month YoY). Compare against PMI Services for confirmation." height={240} />
+              </div>
+            </div>
+          )}
 
           {/* Phase 5.9 — Long-Only Strategy Indicators (Morgan Stanley framework). */}
           <div style={{ marginTop: 32, paddingTop: 24, borderTop: '2px solid ' + C.border }}>
@@ -1604,28 +1677,9 @@
                 note="DII (mutual funds + insurance + retail) flows have structurally absorbed FII selling since 2021 — making the FII−DII balance the cleanest gauge of who is setting the marginal price."
               />
             )}
-            {longOnly?.sip?.series && (
-              <SipBarChart
-                title="Monthly SIP Inflows — AMFI Press Releases"
-                data={longOnly.sip.series}
-                color={C.purple}
-                source={longOnly?.sources?.sip || 'AMFI monthly SIP contribution press releases'}
-                note="SIP inflows are the structural domestic liquidity floor for Indian equities. Each new ATH raises the bar for FIIs trying to push the market lower; rolling 12M SIP collections now exceed cumulative FII outflows in most pull-back regimes."
-              />
-            )}
-            {longOnly?.equityAum && longOnly.equityAum.latest && (
-              <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <div>
-                    <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Equity Mutual Fund AUM (Latest)</div>
-                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>{longOnly?.sources?.equityAum || 'AMFI monthly AAUM press releases'}</div>
-                  </div>
-                  <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: C.green }}>
-                    ₹{((longOnly.equityAum.latest.value || 0)/100000).toFixed(2)} Lakh Cr
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* Phase 6 — SIP and Equity-AUM tiles removed: AMFI publishes both only as JPG images on
+                their press-release pages, with no machine-readable feed. Per the stale-data audit, the
+                dashboard refuses to render hand-curated frozen series alongside live ones. */}
           </div>
         </div>
       );
@@ -1716,35 +1770,63 @@
       const [dataCache, setDataCache] = useState({});
       const [loading, setLoading] = useState(true);
       const [listLoading, setListLoading] = useState(true);
+      const [fetchError, setFetchError] = useState(null);
 
-      // Fetch stocks list on mount
+      // Phase 6 — Fetch stocks list with defensive guards. Any non-array / error response keeps the
+      // listLoading state cleared so the Stocks tab renders its "no data" placeholder instead of hanging.
       useEffect(() => {
+        let cancelled = false;
         fetch(STOCKS_BASE + '?mode=stocks-list&t=' + Date.now(), { cache: 'no-store' })
           .then(r => r.json())
           .then(list => {
+            if (cancelled) return;
             if (Array.isArray(list) && list.length > 0) {
               setStocksList(list);
               if (!selectedTicker) setSelectedTicker(list[0].ticker);
+              setFetchError(null);
+            } else {
+              setFetchError(list && list.error ? String(list.error) : 'stocks-list endpoint returned no data');
             }
             setListLoading(false);
           })
-          .catch(() => { setListLoading(false); });
+          .catch(e => { if (!cancelled) { setFetchError(String(e)); setListLoading(false); } });
+        return () => { cancelled = true; };
       }, []);
 
-      // Fetch data for selected ticker
+      // Phase 6 — Fetch data for the selected ticker. Defensive: missing rows[] never crashes the chart pipeline.
       useEffect(() => {
         if (!selectedTicker) return;
-        if (dataCache[selectedTicker]) return; // cached
+        if (dataCache[selectedTicker]) return;
         setLoading(true);
+        let cancelled = false;
         fetch(STOCKS_BASE + '?mode=stocks-data&ticker=' + encodeURIComponent(selectedTicker) + '&t=' + Date.now(), { cache: 'no-store' })
           .then(r => r.json())
           .then(j => {
-            const processed = processStocksRows(j.rows || []);
+            if (cancelled) return;
+            const processed = processStocksRows((j && Array.isArray(j.rows)) ? j.rows : []);
             setDataCache(prev => ({ ...prev, [selectedTicker]: processed }));
             setLoading(false);
           })
-          .catch(() => { setLoading(false); });
+          .catch(e => { if (!cancelled) { setLoading(false); } });
+        return () => { cancelled = true; };
       }, [selectedTicker]);
+
+      // Phase 6 — Force-refresh: drop cache + re-fetch current ticker (also re-pulls Yahoo max history).
+      const refreshStock = useCallback(() => {
+        if (!selectedTicker) return;
+        setDataCache(prev => { const next = { ...prev }; delete next[selectedTicker]; return next; });
+      }, [selectedTicker]);
+
+      // Phase 6 — XLSX export of the currently filtered series (matches the time toggle).
+      const downloadStock = useCallback(() => {
+        if (typeof XLSX === 'undefined' || !selectedTicker) return;
+        const rows = (dataCache[selectedTicker] || []).filter(d => d && d.date);
+        const filteredRows = applyPeriodFilter(rows, period, customStartISO);
+        const sheet = XLSX.utils.json_to_sheet(filteredRows.map(r => ({ date: r.date, close: r.close, pe: r.pe || null, pb: r.pb || null, eps_ttm: r.eps_ttm || null, bvps: r.bvps || null })));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, sheet, selectedTicker);
+        XLSX.writeFile(wb, selectedTicker + '_' + (period || 'All') + '.xlsx');
+      }, [dataCache, selectedTicker, period, customStartISO]);
 
       const data = dataCache[selectedTicker] || [];
       const stockMeta = stocksList.find(s => s.ticker === selectedTicker);
@@ -1839,7 +1921,7 @@
                 {PERIODS.filter(p => p.label !== 'Date').map(p => (
                   <button key={p.label} onClick={() => { setPeriod(p.label); setCustomStart(''); }}
                     style={{ background: period === p.label ? C.cyan : 'transparent', border: '1px solid ' + (period === p.label ? C.cyan : C.border), color: period === p.label ? '#ffffff' : C.textSec, borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: period === p.label ? 600 : 400, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                    {p.label}
+                    {p.label === 'All' ? 'MAX' : p.label}
                   </button>
                 ))}
                 <input
@@ -1860,6 +1942,15 @@
                   style={{ marginLeft: 2, background: period === 'Date' ? C.cyan : 'transparent', border: '1px solid ' + (period === 'Date' ? C.cyan : C.border), color: period === 'Date' ? '#ffffff' : C.textSec, borderRadius: 6, padding: '3px 8px', fontSize: 11, fontFamily: 'Inter, sans-serif', outline: 'none', cursor: 'pointer' }}
                 />
               </div>
+              {/* Phase 6 — Standardized Refresh + Download buttons matching the Nifty / Sector tabs. */}
+              <button onClick={refreshStock} disabled={!selectedTicker || loading}
+                style={{ background: 'transparent', border: '1px solid ' + C.border, color: C.textSec, borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 600, cursor: (!selectedTicker || loading) ? 'not-allowed' : 'pointer', fontFamily: 'Inter, sans-serif', opacity: (!selectedTicker || loading) ? 0.5 : 1 }}>
+                {loading ? '↻ Refreshing…' : '↻ Refresh'}
+              </button>
+              <button onClick={downloadStock} disabled={!selectedTicker || (dataCache[selectedTicker] || []).length === 0}
+                style={{ background: 'transparent', border: '1px solid ' + C.border, color: C.textSec, borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                📥 XLSX
+              </button>
             </div>
           </div>
 
@@ -1880,11 +1971,17 @@
             )}
           </div>
 
-          {loading && data.length === 0 ? (
-            <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading {selectedTicker}...</div>
-          ) : data.length === 0 ? (
+          {/* Phase 6 — Defensive rendering: any failure surfaces a clear placeholder instead of crashing
+              the rest of the dashboard. The Stocks tab now never blocks the Nifty / Macro tabs. */}
+          {!stocksList || stocksList.length === 0 ? (
             <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>
-              No data available for {selectedTicker}. The stock may be unlisted, newly listed, or data unavailable from upstream.
+              Stocks universe failed to load{fetchError ? ': ' + fetchError : '. '} Try Refresh, or switch to the Indices / Macro tab.
+            </div>
+          ) : loading && data.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading {selectedTicker}…</div>
+          ) : !data || data.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>
+              No data available for {selectedTicker}. Try Refresh — Yahoo may be rate-limited.
             </div>
           ) : (
           <React.Fragment>
@@ -2543,7 +2640,7 @@
           {/* Phase-5: GDP Factor Matrix card REMOVED from sector tabs — moved into the dedicated INDIA MACRO tab. */}
 
           {/* Phase-5: India Macro Hub takes over when in india-macro country. Phase-4 Global Macro Hub same. */}
-          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} indiaExtras={indiaExtras} sectorWeights={sectorWeights} longOnly={longOnly} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} globalExtras={globalExtras} period={period} customStartISO={customStartISO} /> : (<React.Fragment>
+          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} indiaExtras={indiaExtras} sectorWeights={sectorWeights} longOnly={longOnly} period={period} customStartISO={customStartISO} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} globalExtras={globalExtras} period={period} customStartISO={customStartISO} /> : (<React.Fragment>
           {/* KPI Cards — Phase-5: added EpsGrowthCard with 1Y/2Y/3Y/4Y/5Y/7Y/10Y toggle */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
             <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + (filteredStats?.pe || EMPTY_STATS).mean + 'x'} />
