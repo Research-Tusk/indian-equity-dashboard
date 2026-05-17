@@ -1765,33 +1765,40 @@
     }
 
     function StocksDashboard({ period, setPeriod, customStart, setCustomStart, customStartISO }) {
-      const [stocksList, setStocksList] = useState([]);
+      // Phase 6.4 — Cascading screener: pick an Index, then a Company. Data fetched only when a company is picked.
+      const [universe, setUniverse] = useState(null);
+      const [selectedIndex, setSelectedIndex] = useState('');
       const [selectedTicker, setSelectedTicker] = useState('');
       const [dataCache, setDataCache] = useState({});
-      const [loading, setLoading] = useState(true);
+      const [loading, setLoading] = useState(false);
       const [listLoading, setListLoading] = useState(true);
       const [fetchError, setFetchError] = useState(null);
+      // Backward-compat: stocksList is the array of {ticker,name} for the currently selected index.
+      const stocksList = (universe && selectedIndex) ? (universe.tree[selectedIndex] || []) : [];
 
-      // Phase 6 — Fetch stocks list with defensive guards. Any non-array / error response keeps the
-      // listLoading state cleared so the Stocks tab renders its "no data" placeholder instead of hanging.
+      // Phase 6.4 — Fetch the full universe tree (Index → constituents) once on mount.
       useEffect(() => {
         let cancelled = false;
-        fetch(STOCKS_BASE + '?mode=stocks-list&t=' + Date.now(), { cache: 'no-store' })
+        fetch(STOCKS_BASE + '?mode=stocks-universe&t=' + Date.now(), { cache: 'no-store' })
           .then(r => r.json())
-          .then(list => {
+          .then(u => {
             if (cancelled) return;
-            if (Array.isArray(list) && list.length > 0) {
-              setStocksList(list);
-              if (!selectedTicker) setSelectedTicker(list[0].ticker);
+            if (u && u.tree && typeof u.tree === 'object') {
+              setUniverse(u);
+              const firstIdx = Object.keys(u.tree).find(k => (u.tree[k] || []).length > 0) || '';
+              setSelectedIndex(firstIdx);
               setFetchError(null);
             } else {
-              setFetchError(list && list.error ? String(list.error) : 'stocks-list endpoint returned no data');
+              setFetchError(u && u.error ? String(u.error) : 'stocks-universe endpoint returned no data');
             }
             setListLoading(false);
           })
           .catch(e => { if (!cancelled) { setFetchError(String(e)); setListLoading(false); } });
         return () => { cancelled = true; };
       }, []);
+
+      // Phase 6.4 — Clear the company selection whenever the index changes (cascading reset).
+      useEffect(() => { setSelectedTicker(''); }, [selectedIndex]);
 
       // Phase 6 — Fetch data for the selected ticker. Defensive: missing rows[] never crashes the chart pipeline.
       useEffect(() => {
@@ -1955,33 +1962,55 @@
           </div>
 
           {/* Stock Selector Dropdown */}
+          {/* Phase 6.4 — Cascading screener. Index list comes from the live NSE-scraped universe tree;
+              picking an index populates the company dropdown; the stocks-data fetch only fires once a
+              company is chosen, so the screener stays interactive even when Yahoo is slow. */}
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 24, flexWrap: 'wrap' }}>
-            <label style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Select Stock</label>
+            <label style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Index</label>
+            <select
+              value={selectedIndex}
+              onChange={e => setSelectedIndex(e.target.value)}
+              style={{ background: '#ffffff', border: '1px solid ' + C.border, borderRadius: 8, padding: '8px 12px', fontSize: 14, fontFamily: 'Inter, sans-serif', color: C.text, minWidth: 240, cursor: 'pointer', outline: 'none' }}
+            >
+              <option value="">— Select an index —</option>
+              {universe && Object.keys(universe.tree || {}).map(idx => {
+                const n = (universe.tree[idx] || []).length;
+                return <option key={idx} value={idx}>{idx} ({n})</option>;
+              })}
+            </select>
+            <label style={{ fontSize: 12, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Company</label>
             <select
               value={selectedTicker}
               onChange={e => setSelectedTicker(e.target.value)}
-              style={{ background: '#ffffff', border: '1px solid ' + C.border, borderRadius: 8, padding: '8px 12px', fontSize: 14, fontFamily: 'Inter, sans-serif', color: C.text, minWidth: 360, cursor: 'pointer', outline: 'none' }}
+              disabled={!selectedIndex || stocksList.length === 0}
+              style={{ background: '#ffffff', border: '1px solid ' + C.border, borderRadius: 8, padding: '8px 12px', fontSize: 14, fontFamily: 'Inter, sans-serif', color: C.text, minWidth: 320, cursor: 'pointer', outline: 'none' }}
             >
+              <option value="">— Select a company —</option>
               {stocksList.map(s => (
                 <option key={s.ticker} value={s.ticker}>{s.name} ({s.ticker})</option>
               ))}
             </select>
             {stockMeta && (
-              <span className="mono" style={{ fontSize: 11, color: C.textMut }}>{stockMeta.yahoo_symbol} &bull; {stockMeta.exchange}</span>
+              <span className="mono" style={{ fontSize: 11, color: C.textMut }}>{stockMeta.yahoo_symbol || selectedTicker} &bull; NSE</span>
             )}
           </div>
 
-          {/* Phase 6 — Defensive rendering: any failure surfaces a clear placeholder instead of crashing
-              the rest of the dashboard. The Stocks tab now never blocks the Nifty / Macro tabs. */}
-          {!stocksList || stocksList.length === 0 ? (
+          {/* Phase 6.4 — Defensive rendering. No data fetch fires until a company is picked. */}
+          {listLoading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading stocks universe…</div>
+          ) : !universe ? (
             <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>
-              Stocks universe failed to load{fetchError ? ': ' + fetchError : '. '} Try Refresh, or switch to the Indices / Macro tab.
+              Stocks universe failed to load{fetchError ? ': ' + fetchError : '.'} Try Refresh, or switch to the Indices / Macro tab.
             </div>
-          ) : loading && data.length === 0 ? (
+          ) : !selectedTicker ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>
+              Pick an index, then a company to load its max-history price chart.
+            </div>
+          ) : loading && (!data || data.length === 0) ? (
             <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading {selectedTicker}…</div>
           ) : !data || data.length === 0 ? (
             <div style={{ padding: 40, textAlign: 'center', color: C.textMut, fontSize: 14 }}>
-              No data available for {selectedTicker}. Try Refresh — Yahoo may be rate-limited.
+              No data available for {selectedTicker}. Try Refresh — Yahoo may be rate-limited or this ticker may not be listed.
             </div>
           ) : (
           <React.Fragment>
@@ -2095,9 +2124,22 @@
           </React.Fragment>
           )}
 
+          {/* Phase 6.4 — Methodology & Data Sourcing card. Sits below all charts to document the
+              dynamic constituent mapper + Capital Markets overrides + Yahoo Finance fundamentals. */}
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: '20px 24px', marginTop: 32 }}>
+            <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
+              Methodology &amp; Data Sourcing
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 1.7, color: C.textSec }}>
+              <li>Constituents are fetched dynamically from live NSE index data. JM Financial, IIFL Securities, and Monarch Networth Capital are manually tracked alongside Nifty Capital Markets.</li>
+              <li>Historical charts display Price-based Standard Deviation bands (Mean, +/- 1SD, +/- 2SD). Historical P/E and P/B bands are not plotted for individual equities due to API limitations.</li>
+              <li>Snapshot fundamentals (Current P/E, EPS) are fetched live via Yahoo Finance.</li>
+            </ul>
+          </div>
+
           {/* Footer */}
           <div style={{ textAlign: 'center', padding: '24px 0', fontSize: 12, color: C.textMut, borderTop: '1px solid ' + C.border, marginTop: 32 }}>
-            Stock prices sourced from Yahoo Finance &bull; Fundamentals (TTM EPS, BVPS) from Yahoo fundamentals time-series &bull; Baseline start date: Apr 2016 (or listing date if later) &bull; Refresh: daily via Supabase pg_cron
+            Stock prices sourced from Yahoo Finance &bull; Constituents from NSE equity-stockIndices API &bull; Baseline: Yahoo max history (period1=0) &bull; Refresh: on-demand via the Refresh button
             <br /><span style={{ opacity: 0.7 }}>Tusk Invest Research</span>
           </div>
         </div>
