@@ -88,6 +88,12 @@
         { id: 'nifty-commodities',      label: 'Nifty Commodities',     shortLabel: 'Commodities' },
         { id: 'nifty-services-sector',  label: 'Nifty Services Sector', shortLabel: 'Services' },
         { id: 'nifty-realty',           label: 'Nifty Realty',          shortLabel: 'Realty' },
+        { id: 'nifty-oil-gas',          label: 'Nifty Oil & Gas',       shortLabel: 'Oil & Gas' },
+        { id: 'nifty-metal',            label: 'Nifty Metal',           shortLabel: 'Metal' },
+        { id: 'nifty-media',            label: 'Nifty Media',           shortLabel: 'Media' },
+        { id: 'nifty-consumer-durables',label: 'Nifty Consumer Durables', shortLabel: 'Cons. Durables' },
+        { id: 'nifty-chemicals',        label: 'Nifty Chemicals',       shortLabel: 'Chemicals' },
+        { id: 'nifty-cement',           label: 'Nifty Cement',          shortLabel: 'Cement' },
       ],
       global: [
         { id: 'sp500',    label: 'S&P 500',    shortLabel: 'S&P 500',    worldMcapPct: 62.0 },
@@ -116,8 +122,42 @@
       'nifty-capital-markets',
       'nifty-fin-service','nifty-energy','nifty-it','nifty-auto','nifty-fmcg',
       'nifty-pharma','nifty-infra','nifty-commodities','nifty-services-sector',
-      'nifty-realty'
+      'nifty-realty',
+      // Phase 6.5 — six new thematic sectors
+      'nifty-oil-gas','nifty-metal','nifty-media','nifty-consumer-durables','nifty-chemicals','nifty-cement'
     ]);
+
+    // Phase 6.5 — Map each dashboard sector tab to NSE "industry" classification keywords.
+    // Used to aggregate live Nifty 50 ffmc-derived weights into per-tab weight for dynamic sorting.
+    const TAB_INDUSTRY_KEYWORDS = {
+      'nifty-fin-service':     ['bank','financ','insur','asset management','holding','non bank'],
+      'nifty-energy':          ['refineries','oil','gas','energy','power','electric utilities'],
+      'nifty-oil-gas':         ['refineries','oil','gas'],
+      'nifty-it':              ['computer','software','it serv','it consult'],
+      'nifty-auto':            ['passenger car','auto component','motorcycle','commercial vehicle','tractor','tyre'],
+      'nifty-fmcg':            ['fmcg','household','food','beverage','tobacco','personal care','diversified fmcg'],
+      'nifty-pharma':          ['pharma','drug','biotech','healthcare'],
+      'nifty-infra':           ['civil construction','infrastructure','construction','ports','power'],
+      'nifty-commodities':     ['metal','mining','chemical','fertilizer'],
+      'nifty-services-sector': ['services','retail','consumer','telecom'],
+      'nifty-realty':          ['realty','real estate'],
+      'nifty-metal':           ['metal','mining','steel','aluminium','copper'],
+      'nifty-media':           ['media','entertainment','broadcasting','publishing'],
+      'nifty-consumer-durables':['consumer durable','electronic','household appliance'],
+      'nifty-chemicals':       ['chemical','agro chemical','fertilizer','specialty chemical'],
+      'nifty-cement':          ['cement'],
+      'nifty-capital-markets': ['capital markets','brokerage','asset management','investment','exchange'],
+    };
+    function weightForTab(tabId, sectors) {
+      const kws = TAB_INDUSTRY_KEYWORDS[tabId];
+      if (!kws || !sectors || !sectors.length) return 0;
+      let total = 0;
+      for (const s of sectors) {
+        const name = (s.sector || '').toLowerCase();
+        if (kws.some(kw => name.includes(kw))) total += s.weight || 0;
+      }
+      return +total.toFixed(2);
+    }
     const isSectorIndex = (id) => SECTOR_INDEX_IDS.has(id);
 
     // Per-index TAA configuration — labels, thresholds, explainer strings
@@ -171,6 +211,13 @@
         mcapGdpExplainer: 'Microcaps are illiquid and dominated by retail flows; SIP inflow trends are the cleanest forward-look on demand.',
         mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20,
       },
+      // Phase 6.5 — TAA configs for 6 new sectors (reuse macro-proxy template since no sector-specific FII feeds exist).
+      'nifty-oil-gas':           { fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.', erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.', bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Macro proxy.', mcapGdpExplainer: 'Oil & Gas cycles closely with crude prices and refining margins; mcap/GDP swings reflect commodity regime shifts.', mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20 },
+      'nifty-metal':             { fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.', erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.', bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Macro proxy.', mcapGdpExplainer: 'Metals are the highest-beta cyclical sector; track against global PMI and China demand.', mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20 },
+      'nifty-media':             { fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.', erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.', bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Macro proxy.', mcapGdpExplainer: 'Media is a structural-growth story tied to ad spends and OTT penetration.', mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20 },
+      'nifty-consumer-durables': { fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.', erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.', bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Macro proxy.', mcapGdpExplainer: 'Consumer durables track urban discretionary spending and credit availability.', mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20 },
+      'nifty-chemicals':         { fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.', erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.', bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Macro proxy.', mcapGdpExplainer: 'Specialty chemicals are the China+1 beneficiaries; valuations stretch on capex cycle narratives.', mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20 },
+      'nifty-cement':            { fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.', erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.', bondLabel: '10Y GSEC Yield', breadthUniverse: 'Nifty 500', breadthExplainer: 'Macro proxy.', mcapGdpExplainer: 'Cement leads the infra capex cycle; trough valuations historically precede multi-year upcycles.', mcapGdpHotThreshold: 110, fiiCrowdedThreshold: 80, fiiCapitulationThreshold: 20 },
       'nifty-fin-service': {
         fiiLabel: 'Nifty 50 FII Net Long % (proxy)', fiiExplainer: 'No sector-specific FII data; Nifty 50 positioning is used as a macro proxy.',
         erpFootnote: 'Note: ERP calculated as Forward Earnings Yield minus 10Y G-Sec Yield.',
@@ -373,6 +420,28 @@
         sd1Upper: +(mean + sd).toFixed(2), sd1Lower: +(mean - sd).toFixed(2),
         sd2Upper: +(mean + 2 * sd).toFixed(2), sd2Lower: +(mean - 2 * sd).toFixed(2),
       };
+    }
+
+    // Phase 6.5 — Z-Score = (latest − mean) / σ. Universal Tactical Asset Allocation gauge.
+    // Returns null when sd≈0 or insufficient data so callers can suppress the badge.
+    function calcZScore(latest, mean, sd) {
+      if (latest == null || !isFinite(latest)) return null;
+      if (sd == null || !isFinite(sd) || sd < 1e-9) return null;
+      return +((latest - mean) / sd).toFixed(2);
+    }
+    function ZScoreBadge({ latest, mean, sd, suffix }) {
+      const z = calcZScore(latest, mean, sd);
+      if (z == null) return null;
+      const absZ = Math.abs(z);
+      // Color regime: deep green (+2σ stretched up), green > 0, red < 0, deep red < -2σ.
+      const color = z >= 2 ? '#dc2626' : z >= 1 ? '#16a34a' : z >= 0 ? '#16a34a' : z >= -1 ? '#dc2626' : z >= -2 ? '#dc2626' : '#16a34a';
+      const sign = z >= 0 ? '+' : '−';
+      const tag = absZ >= 2 ? ' · STRETCHED' : absZ >= 1 ? '' : ' · IN BAND';
+      return (
+        <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 6, fontSize: 11, fontWeight: 700, background: color + '15', border: '1px solid ' + color, color, marginLeft: 8, whiteSpace: 'nowrap' }} title={'Z-Score = (Latest − Mean) / σ. Latest=' + (latest != null ? latest.toFixed(2) : '—') + (suffix||'') + ' · μ=' + (mean != null ? mean.toFixed(2) : '—') + ' · σ=' + (sd != null ? sd.toFixed(2) : '—')}>
+          Z: {sign}{absZ.toFixed(2)}σ{tag}
+        </span>
+      );
     }
 
     function fmtDate(d) {
@@ -1088,9 +1157,12 @@
       const vf = valueFormatter || (v => (v >= 0 ? '+' : '') + (+v).toFixed(2) + suffix);
       return (
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>{title}</h3>
-            <span className="mono" style={{ fontSize: 13, fontWeight: 700, color }}>{vf(latest)}</span>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span className="mono" style={{ fontSize: 13, fontWeight: 700, color }}>{vf(latest)}</span>
+              <ZScoreBadge latest={latest} mean={stats.mean} sd={stats.sd} suffix={suffix} />
+            </div>
           </div>
           <ResponsiveContainer width="100%" height={height || 280}>
             <ComposedChart data={series} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
@@ -1993,6 +2065,12 @@
             {stockMeta && (
               <span className="mono" style={{ fontSize: 11, color: C.textMut }}>{stockMeta.yahoo_symbol || selectedTicker} &bull; NSE</span>
             )}
+            {/* Phase 6.5 — Weight in Index pulled from the enriched stocks-universe payload (ffmc-derived). */}
+            {stockMeta && stockMeta.weight != null && stockMeta.weight > 0 && (
+              <span className="mono" style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 6, background: 'rgba(8,145,178,0.10)', border: '1px solid ' + C.cyan, color: C.cyan, marginLeft: 6 }}>
+                Weight in {selectedIndex || 'Index'}: {stockMeta.weight.toFixed(2)}%
+              </span>
+            )}
           </div>
 
           {/* Phase 6.4 — Defensive rendering. No data fetch fires until a company is picked. */}
@@ -2016,7 +2094,7 @@
           <React.Fragment>
           {/* KPI Cards */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
-            <StatCard label="Latest Price" value={latestClose != null ? latestClose.toFixed(2) : '—'} suffix="" color={C.cyan} subtext={'Mean: ' + stats.price.mean.toFixed(2)} />
+            <StatCard label="Latest Price" value={latestClose != null ? latestClose.toFixed(2) : '—'} suffix="" color={C.cyan} subtext={'Mean: ' + stats.price.mean.toFixed(2) + (latestClose != null && stats.price.sd > 0 ? ' · Z ' + ((latestClose - stats.price.mean)/stats.price.sd >= 0 ? '+' : '−') + Math.abs((latestClose - stats.price.mean)/stats.price.sd).toFixed(2) + 'σ' : '')} />
             <StatCard label="P/E (TTM)" value={latestPE != null ? latestPE.toFixed(2) : '—'} suffix="x" color={C.blue} subtext={peRows.length > 0 ? ('Mean: ' + stats.pe.mean.toFixed(2) + 'x') : 'No fundamentals'} />
             <StatCard label="P/B" value={latestPB != null ? latestPB.toFixed(2) : '—'} suffix="x" color={C.purple} subtext={pbRows.length > 0 ? ('Mean: ' + stats.pb.mean.toFixed(2) + 'x') : 'No fundamentals'} />
             <StatCard label="Earnings Yield" value={latestEY != null ? latestEY.toFixed(2) : '—'} suffix="%" color={C.green} subtext="Inverse of P/E" />
@@ -2186,6 +2264,8 @@
       const [sectorWeights, setSectorWeights] = useState(null);
       // Phase 5.9 — Long-only strategy indicators (real rates, NomGDP-Repo spread, FII/DII flows, SIP, AUM).
       const [longOnly, setLongOnly] = useState(null);
+      // Phase 6.5 — Live Nifty 50 sector weights (ffmc-derived). Drives the dynamic tab sort below.
+      const [nifty50Wts, setNifty50Wts] = useState(null);
       // Phase-3/4/5 + Phase 5.6B macro pipelines (global-extras, india-extras) fetched alongside.
       useEffect(() => {
         const f = () => {
@@ -2198,6 +2278,8 @@
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=sector-weights&index=nifty50').then(r => r.json()).then(setSectorWeights).catch(() => {});
           // Phase 5.9 — Long-only strategy indicators pipeline.
           fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=long-only').then(r => r.json()).then(setLongOnly).catch(() => {});
+          // Phase 6.5 — Live Nifty 50 sector weightages for dynamic tab sorting.
+          fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=nifty50-sector-weights').then(r => r.json()).then(setNifty50Wts).catch(() => {});
         };
         f();
         const t = setInterval(f, 3600 * 1000);
@@ -2376,16 +2458,18 @@
       // EMPTY_STATS is defined at module scope (line 175) — do NOT redeclare here
       // because Babel converts const→var, causing var-hoisting shadow bugs.
       const filteredStats = useMemo(() => {
-        if (filtered.length === 0) return { pe: EMPTY_STATS, pb: EMPTY_STATS, eyby: EMPTY_STATS, by: EMPTY_STATS };
+        if (filtered.length === 0) return { pe: EMPTY_STATS, pb: EMPTY_STATS, eyby: EMPTY_STATS, by: EMPTY_STATS, close: EMPTY_STATS };
         const peVals = filtered.map(x => x.pe).filter(v => v != null && isFinite(v));
         const pbVals = filtered.map(x => x.pb).filter(v => v != null && isFinite(v));
         const eybyVals = filtered.map(x => x.eyby).filter(v => v != null && isFinite(v));
         const byVals = filtered.map(x => x.bondYield).filter(v => v != null && isFinite(v));
+        const closeVals = filtered.map(x => x.close).filter(v => v != null && isFinite(v));
         return {
           pe: peVals.length > 1 ? calcStats(peVals) : EMPTY_STATS,
           pb: pbVals.length > 1 ? calcStats(pbVals) : EMPTY_STATS,
           eyby: eybyVals.length > 1 ? calcStats(eybyVals) : EMPTY_STATS,
           by: byVals.length > 1 ? calcStats(byVals) : EMPTY_STATS,
+          close: closeVals.length > 1 ? calcStats(closeVals) : EMPTY_STATS,
         };
       }, [filtered]);
 
@@ -2562,7 +2646,13 @@
           {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
             <div>
-              <h1 style={{ fontSize: 28, fontWeight: 700, color: C.text, letterSpacing: '-0.02em' }}>Equity Macro Dashboard</h1>
+              <h1 style={{ fontSize: 28, fontWeight: 700, color: C.text, letterSpacing: '-0.02em', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                Equity Macro Dashboard
+                {/* Phase 6.5 — Z-Score badge: live regime gauge for the visible time horizon. */}
+                {current && current.close != null && filteredStats?.close && (
+                  <ZScoreBadge latest={current.close} mean={filteredStats.close.mean} sd={filteredStats.close.sd} suffix="" />
+                )}
+              </h1>
               <p style={{ fontSize: 14, color: C.textMut, marginTop: 6 }}>{indexConfig.label} Valuation Metrics &bull; Data till: {lastUpdated ? new Date(lastUpdated).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'}) : '...'}</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -2653,16 +2743,35 @@
               </button>
             ))}
           </div>
-          {/* Phase-4 Tier 2: Flat horizontally-scrollable sub-tabs (no dropdowns). */}
+          {/* Phase-4 Tier 2: Flat horizontally-scrollable sub-tabs (no dropdowns).
+              Phase 6.5 — On the India tab, sort tabs dynamically: Broad Indices first → Capital Markets →
+              remaining sectors ordered by live Nifty 50 ffmc-derived weight (descending). Other countries unchanged. */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 24, overflowX: 'auto', overflowY: 'hidden', whiteSpace: 'nowrap', paddingBottom: 4, WebkitOverflowScrolling: 'touch', scrollbarWidth: 'thin' }}>
-            {COUNTRY_INDICES[activeCountry].map(idx => (
-              <button key={idx.id}
-                className={'index-tab' + (activeIndex === idx.id ? ' active' : '')}
-                onClick={() => handleIndexSwitch(idx.id)}
-                style={{ flexShrink: 0 }}>
-                {idx.shortLabel}
-              </button>
-            ))}
+            {(() => {
+              const list = COUNTRY_INDICES[activeCountry] || [];
+              if (activeCountry !== 'india') return list;
+              const BROAD = new Set(['nifty50','nifty-next-50','nifty-midcap-150','nifty-smallcap-250','nifty-microcap-250']);
+              const broad = list.filter(x => BROAD.has(x.id));
+              const cm = list.filter(x => x.id === 'nifty-capital-markets');
+              const others = list.filter(x => !BROAD.has(x.id) && x.id !== 'nifty-capital-markets');
+              const sectors = (nifty50Wts && Array.isArray(nifty50Wts.sectors)) ? nifty50Wts.sectors : [];
+              if (sectors.length > 0) {
+                others.sort((a, b) => weightForTab(b.id, sectors) - weightForTab(a.id, sectors));
+              }
+              return [...broad, ...cm, ...others];
+            })().map(idx => {
+              const sectors = (activeCountry === 'india' && nifty50Wts && Array.isArray(nifty50Wts.sectors)) ? nifty50Wts.sectors : [];
+              const wt = (sectors.length > 0 && !['nifty50','nifty-next-50','nifty-midcap-150','nifty-smallcap-250','nifty-microcap-250','nifty-capital-markets'].includes(idx.id)) ? weightForTab(idx.id, sectors) : 0;
+              return (
+                <button key={idx.id}
+                  className={'index-tab' + (activeIndex === idx.id ? ' active' : '')}
+                  onClick={() => handleIndexSwitch(idx.id)}
+                  style={{ flexShrink: 0 }}
+                  title={wt > 0 ? 'Nifty 50 weight: ' + wt.toFixed(2) + '%' : undefined}>
+                  {idx.shortLabel}{wt > 0 ? <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.65 }}>{wt.toFixed(1)}%</span> : null}
+                </button>
+              );
+            })}
           </div>
 
           {/* Phase-4: world-mcap pill on Global tab (header context, not a dropdown). */}
