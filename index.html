@@ -1909,6 +1909,9 @@
       const [loading, setLoading] = useState(false);
       const [listLoading, setListLoading] = useState(true);
       const [fetchError, setFetchError] = useState(null);
+      // Phase 7.3 — Fundamental Snapshot (Yahoo quoteSummary) cache keyed by ticker.
+      const [quoteCache, setQuoteCache] = useState({});
+      const [quoteLoading, setQuoteLoading] = useState(false);
       // Backward-compat: stocksList is the array of {ticker,name} for the currently selected index.
       const stocksList = (universe && selectedIndex) ? (universe.tree[selectedIndex] || []) : [];
 
@@ -1954,10 +1957,26 @@
         return () => { cancelled = true; };
       }, [selectedTicker]);
 
+      // Phase 7.3 — Fetch Fundamental Snapshot (ROE / P/B / Trailing EPS) for the selected ticker.
+      // Backend defensively returns fundamentals=null + error string on Yahoo failure so the UI degrades
+      // to "N/A" instead of crashing.
+      useEffect(() => {
+        if (!selectedTicker) return;
+        if (quoteCache[selectedTicker]) return;
+        let cancelled = false;
+        setQuoteLoading(true);
+        fetch(STOCKS_BASE + '?mode=stocks-quote&ticker=' + encodeURIComponent(selectedTicker) + '&t=' + Date.now(), { cache: 'no-store' })
+          .then(r => r.json())
+          .then(j => { if (!cancelled) { setQuoteCache(prev => ({ ...prev, [selectedTicker]: j || null })); setQuoteLoading(false); } })
+          .catch(() => { if (!cancelled) { setQuoteCache(prev => ({ ...prev, [selectedTicker]: null })); setQuoteLoading(false); } });
+        return () => { cancelled = true; };
+      }, [selectedTicker]);
+
       // Phase 6 — Force-refresh: drop cache + re-fetch current ticker (also re-pulls Yahoo max history).
       const refreshStock = useCallback(() => {
         if (!selectedTicker) return;
         setDataCache(prev => { const next = { ...prev }; delete next[selectedTicker]; return next; });
+        setQuoteCache(prev => { const next = { ...prev }; delete next[selectedTicker]; return next; });
       }, [selectedTicker]);
 
       // Phase 6 — XLSX export of the currently filtered series (matches the time toggle).
@@ -2164,6 +2183,42 @@
             <StatCard label="Earnings Yield" value={latestEY != null ? latestEY.toFixed(2) : '—'} suffix="%" color={C.green} subtext="Inverse of P/E" />
             <StatCard label="Trading Days" value={data.length.toLocaleString()} suffix="" color={C.amber} subtext={firstAvailable ? ('Since ' + new Date(firstAvailable).toLocaleDateString('en-IN', {month:'short', year:'numeric'})) : ''} />
           </div>
+
+          {/* Phase 7.3 — Fundamental Snapshot. Live Yahoo quoteSummary fields (Trailing EPS, P/B, ROE,
+              EPS Growth, Trailing/Forward PE, Market Cap) styled to match the KPI tiles used across
+              the Indices tabs. Defensive: any null field renders as "N/A" rather than crashing. */}
+          {(() => {
+            const q = quoteCache[selectedTicker];
+            const f = q?.fundamentals;
+            const na = (v, fmt) => (v == null || !isFinite(v)) ? 'N/A' : (typeof fmt === 'function' ? fmt(v) : String(v));
+            const fmtX  = v => v.toFixed(2) + 'x';
+            const fmtPc = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+            const fmtN  = v => v.toFixed(2);
+            const fmtMC = v => v >= 1e12 ? '₹' + (v/1e12).toFixed(2) + 'T' : v >= 1e9 ? '₹' + (v/1e9).toFixed(2) + 'B' : v >= 1e7 ? '₹' + (v/1e7).toFixed(2) + 'Cr' : '₹' + v.toFixed(0);
+            return (
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Fundamental Snapshot</div>
+                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, fontStyle: 'italic' }}>
+                      {quoteLoading && !f ? 'Loading live fundamentals from Yahoo Finance…' : (q?.error ? ('Yahoo: ' + q.error + ' — fields show N/A') : 'Live Yahoo Finance quoteSummary · auto-refresh on ticker change')}
+                    </div>
+                  </div>
+                  {f && (
+                    <span className="mono" style={{ fontSize: 11, color: C.textMut }}>as of {q?.asOf || 'today'}</span>
+                  )}
+                </div>
+                <div className="kpi-grid">
+                  <StatCard label="Trailing EPS" value={na(f?.trailingEps, fmtN)} suffix={f?.currency ? ' ' + f.currency : ''} color={C.cyan} subtext="TTM diluted EPS · Yahoo" />
+                  <StatCard label="P/B (Live)" value={na(f?.priceToBook, fmtX)} suffix="" color={C.purple} subtext={f?.bookValue != null ? ('Book Value: ' + f.bookValue.toFixed(2)) : 'Price ÷ Book Value/Share'} />
+                  <StatCard label="ROE" value={na(f?.returnOnEquity, fmtPc)} suffix="" color={(f?.returnOnEquity != null && f.returnOnEquity >= 15) ? C.green : C.amber} subtext={(f?.returnOnEquity != null && f.returnOnEquity >= 15) ? 'Quality threshold ≥15%' : 'Below quality threshold'} />
+                  <StatCard label="EPS Growth (Fwd)" value={na(f?.epsGrowthPct, fmtPc)} suffix="" color={(f?.epsGrowthPct != null && f.epsGrowthPct >= 0) ? C.green : C.red} subtext={f?.epsForward != null ? ('Forward EPS: ' + f.epsForward.toFixed(2)) : 'Forward / Trailing − 1'} />
+                  <StatCard label="P/E (Live)" value={na(f?.trailingPE, fmtX)} suffix="" color={C.blue} subtext={f?.forwardPE != null ? ('Fwd: ' + f.forwardPE.toFixed(2) + 'x') : 'Trailing 12-month'} />
+                  <StatCard label="Market Cap" value={na(f?.marketCap, fmtMC)} suffix="" color={C.amber} subtext={f?.dividendYieldPct != null ? ('Div Yield: ' + f.dividendYieldPct.toFixed(2) + '%') : 'Live market cap'} />
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Price Chart */}
           <div style={{ marginBottom: 24 }}>
