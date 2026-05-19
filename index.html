@@ -1630,6 +1630,70 @@
             );
           })()}
 
+          {/* Phase 7.1 — Vulnerability & Yield Indicators. Five SD-banded series that flag external/fiscal
+              stress, monetary-policy stance, and the slope of the rupee yield curve. CPI + Brent =
+              imported-inflation pulse; FX Reserves = balance-of-payments buffer; 10Y G-Sec + Yield
+              Spread (10Y − 3M repo) = the local rates regime (OIS-curve proxy since no free India OIS feed). */}
+          {(indiaExtras?.cpi?.series || indiaExtras?.brent?.series || indiaExtras?.fxReserves?.series || indiaExtras?.tenYr?.series || indiaExtras?.yieldSpread?.series) && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                Vulnerability &amp; Yield Indicators
+              </div>
+              <div style={{ fontSize: 12, color: C.textMut, marginBottom: 12, fontStyle: 'italic' }}>
+                Phase 7.1 — Imported-inflation pulse (CPI, Brent), balance-of-payments buffer (FX Reserves), and the rupee-rates regime (10Y G-Sec + 10Y−3M spread as OIS-curve proxy). All series wear ±1σ / ±2σ bands so dispersion vs. trend is visible at a glance.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
+                {indiaExtras?.cpi?.series && (
+                  <MacroBandChart
+                    title="CPI Inflation (YoY)"
+                    data={sliceFilter(indiaExtras.cpi.series)} dataKey="value" color={C.red} suffix="%"
+                    source={indiaExtras?.sources?.cpi || 'FRED INDCPIALLMINMEI 12M YoY'}
+                    note="Headline inflation print. RBI's flexible-inflation-target band is 4 ± 2%. Sustained breaches above +6% (the upper tolerance) typically trigger repo hikes; sub-2% prints flag demand-deflation risk."
+                    height={240}
+                  />
+                )}
+                {indiaExtras?.brent?.series && (
+                  <MacroBandChart
+                    title="Brent Crude (USD/bbl)"
+                    data={sliceFilter(indiaExtras.brent.series)} dataKey="value" color={C.amber} suffix=""
+                    valueFormatter={(v) => '$' + (+v).toFixed(2)}
+                    source={indiaExtras?.sources?.brent || 'Yahoo BZ=F (ICE Brent front-month, daily)'}
+                    note="India imports >85% of its crude, so Brent is the single biggest exogenous shock variable for CAD, CPI, and the rupee. A +2σ run is the classic external-vulnerability flag for EM India."
+                    height={240}
+                  />
+                )}
+                {indiaExtras?.fxReserves?.series && (
+                  <MacroBandChart
+                    title="FX Reserves ($B)"
+                    data={sliceFilter(indiaExtras.fxReserves.series)} dataKey="value" color={C.green} suffix=""
+                    valueFormatter={(v) => '$' + (+v).toFixed(0) + 'B'}
+                    source={indiaExtras?.sources?.fxReserves || 'FRED TRESEGINM052N (RBI Total Reserves ex Gold, monthly)'}
+                    note="RBI's defensive buffer. Sharp drawdowns (−2σ) typically coincide with INR-defence interventions during DXY spikes or oil shocks. Higher = thicker import-cover cushion."
+                    height={240}
+                  />
+                )}
+                {indiaExtras?.tenYr?.series && (
+                  <MacroBandChart
+                    title="India 10Y G-Sec Yield"
+                    data={sliceFilter(indiaExtras.tenYr.series)} dataKey="value" color={C.cyan} suffix="%"
+                    source={indiaExtras?.sources?.tenYr || 'FRED INDIRLTLT01STM (monthly, %)'}
+                    note="The risk-free benchmark for INR-denominated assets. The discount rate behind every DCF on the dashboard — when this rises above its +1σ band, equity-risk-premium compression typically follows."
+                    height={240}
+                  />
+                )}
+                {indiaExtras?.yieldSpread?.series && (
+                  <MacroBandChart
+                    title="Yield Spread — 10Y G-Sec − 3M Repo (OIS Proxy)"
+                    data={sliceFilter(indiaExtras.yieldSpread.series)} dataKey="value" color={C.purple} suffix="%"
+                    source={indiaExtras?.sources?.yieldSpread || 'FRED INDIRLTLT01STM − INDIR3TIB01STM (monthly)'}
+                    note="Slope of the rupee yield curve and the closest free proxy for the long-end OIS spread. Steepening (above +1σ) = market pricing reflation / rate cuts ahead; flattening or inversion = expectations of policy tightening or growth slowdown."
+                    height={240}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Phase 5.7 — Sector composition donut (count-based weight from niftyindices.com constituent CSV) */}
           {sectorWeights?.sectors && sectorWeights.sectors.length > 0 && (() => {
             const palette = [C.blue, C.purple, C.green, C.amber, C.red, C.cyan, '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#f97316', '#84cc16', '#06b6d4'];
