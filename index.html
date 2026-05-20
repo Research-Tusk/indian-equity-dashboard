@@ -2352,6 +2352,80 @@
       );
     }
 
+    // Phase 8.1 — Global Control Panel: regime engine + allocation matrix.
+    // Macro regime taxonomy is the standard 4-state mid-cycle framework used by India strategists.
+    // ALLOCATION_MATRIX defines stylized sector weights (% of equity sleeve) for each regime —
+    // values are research-anchored to broker model portfolios (Morgan Stanley, Jefferies India strategy).
+    const REGIME_OPTIONS = [
+      { id: 'auto',           label: 'Auto (Regime Engine)' },
+      { id: 'expansion',      label: 'Expansion' },
+      { id: 'moderation',     label: 'Moderation' },
+      { id: 'slowdown',       label: 'Slowdown' },
+      { id: 'stagflationary', label: 'Stagflationary' },
+    ];
+    const REGIME_DESCRIPTIONS = {
+      expansion:      'Growth accelerating, inflation contained. Cyclicals + small/midcaps + Financials lead. Bond duration shortened.',
+      moderation:     'Growth steady, inflation in tolerance band. Balanced — quality compounders + secular growers carry the cycle.',
+      slowdown:       'Growth decelerating, inflation easing. Defensives, IT, Pharma, FMCG outperform. Bond duration extended.',
+      stagflationary: 'Growth weak, inflation elevated. Real assets (Metals, Energy), Pharma, gold, USD beat equities.',
+    };
+    const ALLOCATION_MATRIX = {
+      expansion:      { Financials: 22, IT: 12, Energy: 8,  Auto: 14, FMCG: 6,  Pharma: 6,  Metals: 12, Infra: 12, Realty: 6, 'Cash/Bonds': 2 },
+      moderation:     { Financials: 22, IT: 18, Energy: 8,  Auto: 10, FMCG: 10, Pharma: 8,  Metals: 6,  Infra: 8,  Realty: 4, 'Cash/Bonds': 6 },
+      slowdown:       { Financials: 12, IT: 22, Energy: 8,  Auto: 6,  FMCG: 18, Pharma: 14, Metals: 4,  Infra: 4,  Realty: 2, 'Cash/Bonds': 10 },
+      stagflationary: { Financials: 8,  IT: 10, Energy: 22, Auto: 4,  FMCG: 14, Pharma: 12, Metals: 14, Infra: 8,  Realty: 4, 'Cash/Bonds': 4 },
+    };
+    const REGIME_COLOR = { expansion: '#10b981', moderation: '#2563eb', slowdown: '#d97706', stagflationary: '#dc2626' };
+
+    function computeAutoRegime(indiaExtras) {
+      const cpiSeries = indiaExtras?.cpi?.series || [];
+      const indSeries = indiaExtras?.gva?.industry?.series || [];
+      const cpiLatest = cpiSeries.length ? cpiSeries[cpiSeries.length - 1].value : null;
+      const indLatest = indSeries.length ? indSeries[indSeries.length - 1].value : null;
+      if (cpiLatest == null || indLatest == null) return null;
+      const highInflation   = cpiLatest >= 5;
+      const strongGrowth    = indLatest >= 6;
+      const moderateGrowth  = indLatest >= 3;
+      if (highInflation && !moderateGrowth) return { id: 'stagflationary', cpi: cpiLatest, growth: indLatest };
+      if (strongGrowth   && !highInflation)   return { id: 'expansion',      cpi: cpiLatest, growth: indLatest };
+      if (moderateGrowth)                     return { id: 'moderation',     cpi: cpiLatest, growth: indLatest };
+      return { id: 'slowdown', cpi: cpiLatest, growth: indLatest };
+    }
+
+    function AllocationMatrix({ regimeId, isOverride, autoRegime }) {
+      if (!regimeId || !ALLOCATION_MATRIX[regimeId]) return null;
+      const weights = ALLOCATION_MATRIX[regimeId];
+      const entries = Object.entries(weights);
+      const accent = REGIME_COLOR[regimeId] || C.purple;
+      const label = (REGIME_OPTIONS.find(r => r.id === regimeId) || {}).label || regimeId;
+      return (
+        <div style={{ background: C.card, border: '2px solid ' + (isOverride ? C.amber : C.border), borderRadius: 12, padding: 20, marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Allocation Strategy Matrix</div>
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, fontStyle: 'italic' }}>
+                Active regime: <span style={{ color: accent, fontWeight: 600 }}>{label}</span>
+                {isOverride ? <span style={{ color: C.amber, fontWeight: 600 }}> · Manual override (what-if)</span> : (autoRegime ? <span style={{ color: C.textMut }}> · Auto: CPI {autoRegime.cpi.toFixed(2)}% · IIP YoY {autoRegime.growth.toFixed(2)}%</span> : null)}
+              </div>
+            </div>
+            <span className="mono" style={{ fontSize: 11, color: C.textMut }}>% of equity sleeve · sums to 100</span>
+          </div>
+          <div style={{ fontSize: 12, color: C.textSec, marginBottom: 14, lineHeight: 1.55 }}>{REGIME_DESCRIPTIONS[regimeId]}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+            {entries.map(([sector, weight]) => (
+              <div key={sector} style={{ background: 'rgba(148,163,184,0.06)', borderLeft: '3px solid ' + accent, borderRadius: '0 6px 6px 0', padding: '10px 12px' }}>
+                <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600 }}>{sector}</div>
+                <div className="mono" style={{ fontSize: 18, color: C.text, fontWeight: 700, marginTop: 2 }}>{weight}%</div>
+                <div style={{ marginTop: 6, height: 4, background: 'rgba(148,163,184,0.18)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: Math.min(100, weight * 4) + '%', background: accent }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     function Dashboard() {
       const [section, setSection] = useState('indices');
       const [activeCountry, setActiveCountry] = useState('india');
@@ -2362,6 +2436,7 @@
       const [countdown, setCountdown] = useState(300);
       const [period, setPeriod] = useState('All');
       const [customStart, setCustomStart] = useState('');
+      const [regimeOverride, setRegimeOverride] = useState('auto');
       // Phase 5.4 — native Refresh Data button state: 'idle' | 'refreshing' | 'done' | 'error'
       const [refreshState, setRefreshState] = useState('idle');
       const triggerRefresh = useCallback(() => {
@@ -2784,30 +2859,42 @@
               <p style={{ fontSize: 14, color: C.textMut, marginTop: 6 }}>{indexConfig.label} Valuation Metrics &bull; Data till: {lastUpdated ? new Date(lastUpdated).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'}) : '...'}</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                {PERIODS.filter(p => p.label !== 'Date').map(p => (
-                  <button key={p.label} onClick={() => { setPeriod(p.label); setCustomStart(''); }}
-                    style={{ background: period === p.label ? C.cyan : 'transparent', border: '1px solid ' + (period === p.label ? C.cyan : C.border), color: period === p.label ? '#ffffff' : C.textSec, borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: period === p.label ? 600 : 400, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
-                    {p.label}
-                  </button>
-                ))}
-                <input
-                  type="date"
-                  value={customStartISO || ''}
-                  onChange={e => {
-                    const v = e.target.value;
-                    if (v) {
-                      const [y, m, d] = v.split('-');
-                      setCustomStart(d + '-' + m + '-' + y);
-                      setPeriod('Date');
-                    } else {
-                      setCustomStart('');
-                      setPeriod('All');
-                    }
-                  }}
-                  title="Pick a custom start date"
-                  style={{ marginLeft: 2, background: period === 'Date' ? C.cyan : 'transparent', border: '1px solid ' + (period === 'Date' ? C.cyan : C.border), color: period === 'Date' ? '#ffffff' : C.textSec, borderRadius: 6, padding: '3px 8px', fontSize: 11, fontFamily: 'Inter, sans-serif', outline: 'none', cursor: 'pointer' }}
-                />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', border: '1.5px solid ' + (regimeOverride !== 'auto' ? C.amber : C.border), borderRadius: 8, background: regimeOverride !== 'auto' ? 'rgba(217,119,6,0.04)' : 'transparent', transition: 'border-color 0.18s ease, background 0.18s ease' }}>
+                <span style={{ fontSize: 10, color: regimeOverride !== 'auto' ? C.amber : C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>{regimeOverride !== 'auto' ? 'Override' : 'Time'}</span>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  {PERIODS.filter(p => p.label !== 'Date').map(p => (
+                    <button key={p.label} onClick={() => { setPeriod(p.label); setCustomStart(''); }}
+                      style={{ background: period === p.label ? C.cyan : 'transparent', border: '1px solid ' + (period === p.label ? C.cyan : C.border), color: period === p.label ? '#ffffff' : C.textSec, borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: period === p.label ? 600 : 400, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+                      {p.label === 'All' ? 'MAX' : p.label}
+                    </button>
+                  ))}
+                  <input
+                    type="date"
+                    value={customStartISO || ''}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (v) {
+                        const [y, m, d] = v.split('-');
+                        setCustomStart(d + '-' + m + '-' + y);
+                        setPeriod('Date');
+                      } else {
+                        setCustomStart('');
+                        setPeriod('All');
+                      }
+                    }}
+                    title="Pick a custom start date"
+                    style={{ marginLeft: 2, background: period === 'Date' ? C.cyan : 'transparent', border: '1px solid ' + (period === 'Date' ? C.cyan : C.border), color: period === 'Date' ? '#ffffff' : C.textSec, borderRadius: 6, padding: '3px 8px', fontSize: 11, fontFamily: 'Inter, sans-serif', outline: 'none', cursor: 'pointer' }}
+                  />
+                </div>
+                <span style={{ fontSize: 10, color: regimeOverride !== 'auto' ? C.amber : C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, marginLeft: 4 }}>Regime</span>
+                <select
+                  value={regimeOverride}
+                  onChange={e => setRegimeOverride(e.target.value)}
+                  title={regimeOverride === 'auto' ? 'Auto-detected from live CPI + IIP YoY' : 'Manual what-if override active'}
+                  style={{ background: regimeOverride !== 'auto' ? 'rgba(217,119,6,0.12)' : '#ffffff', border: '1px solid ' + (regimeOverride !== 'auto' ? C.amber : C.border), color: regimeOverride !== 'auto' ? C.amber : C.textSec, borderRadius: 6, padding: '3px 8px', fontSize: 11, fontFamily: 'Inter, sans-serif', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  {REGIME_OPTIONS.map(o => (<option key={o.id} value={o.id}>{o.label}</option>))}
+                </select>
               </div>
               {/* Phase 5.4 — Native Refresh Data button. Fires update-all server-side and shows a transient loading state. */}
               <button onClick={triggerRefresh} disabled={refreshState === 'refreshing'} title="Trigger a fresh server-side data pull (?mode=update-all)"
@@ -2860,6 +2947,16 @@
               </div>
             </div>
           </div>
+
+          {/* Phase 8.1 — Allocation Strategy Matrix. Auto-derives the regime from live macro data
+              (indiaExtras CPI + IIP YoY), or accepts a manual override from the Control Panel above.
+              Renders the active regime's sector weighting heatmap. Highlighted when manual override active. */}
+          {(() => {
+            const auto = computeAutoRegime(indiaExtras);
+            const effectiveRegime = regimeOverride !== 'auto' ? regimeOverride : (auto?.id || null);
+            if (!effectiveRegime) return null;
+            return <AllocationMatrix regimeId={effectiveRegime} isOverride={regimeOverride !== 'auto'} autoRegime={auto} />;
+          })()}
 
           {/* Tier 1: Country Toggle */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
