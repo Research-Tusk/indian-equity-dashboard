@@ -1155,6 +1155,15 @@
       const stats = vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
       const latest = series[series.length-1][dataKey];
       const vf = valueFormatter || (v => (v >= 0 ? '+' : '') + (+v).toFixed(2) + suffix);
+      // Phase 7.3 — Standardized Y-axis: include all reference bands (±2σ) AND data extremes,
+      // then add a 5% margin so the dashed σ labels are never clipped. This matches the visual
+      // padding used by the Sector P/E and EYBY charts across the dashboard.
+      const candidates = vals.concat([stats.sd2Upper, stats.sd2Lower, stats.sd1Upper, stats.sd1Lower, stats.mean].filter(v => v != null && isFinite(v)));
+      const yMin = candidates.length ? Math.min(...candidates) : 0;
+      const yMax = candidates.length ? Math.max(...candidates) : 1;
+      const yRange = yMax - yMin || Math.max(1, Math.abs(yMax) * 0.1);
+      const yPad = yRange * 0.05;
+      const yDomain = [+(yMin - yPad).toFixed(4), +(yMax + yPad).toFixed(4)];
       return (
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
@@ -1168,7 +1177,7 @@
             <ComposedChart data={series} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
               <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(series.length / 10))} stroke={C.grid} />
-              <YAxis tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + (suffix||'')} />
+              <YAxis domain={yDomain} allowDataOverflow={false} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + (suffix||'')} />
               <Tooltip content={<Tip fields={[{ key: dataKey, label: title.split(' — ')[0], color, suffix: suffix||'' }]} />} />
               <ReferenceLine y={stats.sd2Upper} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+2σ (' + fmt2(stats.sd2Upper) + ')', position: 'insideTopRight',    fill: C.red,    fontSize: 10 }} />
               <ReferenceLine y={stats.sd1Upper} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+1σ (' + fmt2(stats.sd1Upper) + ')', position: 'insideTopRight',    fill: C.amber,  fontSize: 10 }} />
