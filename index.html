@@ -1461,7 +1461,22 @@
       );
     }
 
-    function IndiaMacroHub({ indiaMacro, indiaExtras, sectorWeights, longOnly, period, customStartISO }) {
+    function IndiaMacroHub({ indiaMacro, indiaExtras, sectorWeights, longOnly, period, customStartISO, regimeOverride }) {
+      // Phase 8.2 — Backtest engine state. Fetches /regime-backtest server-side to keep the
+      // computation lightweight. Re-fetches whenever the regime or period selector changes.
+      const [backtestPeriod, setBacktestPeriod] = useState('5Y');
+      const [backtest, setBacktest] = useState(null);
+      const [backtestLoading, setBacktestLoading] = useState(false);
+      const effectiveRegimeId = (regimeOverride && regimeOverride !== 'auto') ? regimeOverride : 'auto';
+      useEffect(() => {
+        let cancelled = false;
+        setBacktestLoading(true);
+        fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=regime-backtest&regime=' + encodeURIComponent(effectiveRegimeId) + '&period=' + encodeURIComponent(backtestPeriod) + '&t=' + Date.now(), { cache: 'no-store' })
+          .then(r => r.json())
+          .then(j => { if (!cancelled) { setBacktest(j); setBacktestLoading(false); } })
+          .catch(() => { if (!cancelled) { setBacktest(null); setBacktestLoading(false); } });
+        return () => { cancelled = true; };
+      }, [effectiveRegimeId, backtestPeriod]);
       // Phase 6 — Wire master period toggle into every band chart inside the hub. Filters all historical
       // arrays (PMI, Cap Util, GDP expenditure, GVA production) so the SD bands recompute on slice.
       const sliceFilter = (arr) => applyPeriodFilter(arr || [], period, customStartISO);
@@ -1825,6 +1840,105 @@
             {/* Phase 6 — SIP and Equity-AUM tiles removed: AMFI publishes both only as JPG images on
                 their press-release pages, with no machine-readable feed. Per the stale-data audit, the
                 dashboard refuses to render hand-curated frozen series alongside live ones. */}
+          </div>
+
+          {/* Phase 8.2 — Allocation Methodology Explainer + Backtest Engine + Allocation Matrix.
+              Sits at the bottom of the India Macro Hub. Pulls the live regime via computeAutoRegime
+              (or the manual override from the Global Control Bar), explains the methodology, runs
+              a server-side CAGR backtest against Nifty 50, and visualizes the allocation grid. */}
+          <div style={{ marginTop: 36, paddingTop: 24, borderTop: '2px solid ' + C.border }}>
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>Allocation Methodology &amp; Backtest</h2>
+            <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 24px' }}>The active regime is auto-detected from live CPI + IIP YoY, or manually overridden via the Global Control Bar above. Sector tilts and the simulated backtest update in real time.</p>
+
+            <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 22, marginBottom: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Allocation Methodology: Macro-Driven Dynamic Factor Rotation</div>
+              <p style={{ fontSize: 13, color: C.textSec, lineHeight: 1.65, margin: '0 0 14px' }}>
+                Equity factor exposure is rotated through four canonical macro regimes defined on the inflation × growth grid. Each regime carries a distinctive sector bias because cost of capital, earnings cyclicality, and pricing power shift predictably with the macro cycle.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
+                {[
+                  { id: 'expansion',      title: 'Expansion',      color: REGIME_COLOR.expansion,      blurb: 'Growth accelerating, inflation contained. Operating leverage favors cyclicals — Financials, Auto, Industrials, Metals, small/midcaps. Bond duration shortened; equity beta raised.' },
+                  { id: 'moderation',     title: 'Moderation',     color: REGIME_COLOR.moderation,     blurb: 'Growth steady, inflation in RBI tolerance band. Quality compounders + secular growers (Financials, IT, premium consumer) carry the cycle. Balanced equity / fixed-income tilt.' },
+                  { id: 'slowdown',       title: 'Slowdown',       color: REGIME_COLOR.slowdown,       blurb: 'Growth decelerating, inflation easing. Defensives outperform — IT (USD revenue cushion), Pharma, FMCG. Bond duration extended; cash sleeve modestly higher.' },
+                  { id: 'stagflationary', title: 'Stagflationary', color: REGIME_COLOR.stagflationary, blurb: 'Growth weak, inflation elevated. Real assets, Energy, Metals, Pharma + a thicker cash/bond hedge. Equity multiples compress; dividend yield matters more than growth.' },
+                ].map(r => (
+                  <div key={r.id} style={{ background: 'rgba(148,163,184,0.06)', borderLeft: '3px solid ' + r.color, borderRadius: '0 6px 6px 0', padding: '10px 14px' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: r.color, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{r.title}</div>
+                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.55, marginTop: 4 }}>{r.blurb}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 12, fontStyle: 'italic' }}>
+                Regime classification: CPI YoY (FRED INDCPIALLMINMEI, 12M YoY) and Industrial Production YoY (FRED INDPROINDMISMEI, 12M YoY) plotted on the 2 × 2 inflation × growth grid. Stylized sector weights anchored to Morgan Stanley / Jefferies India strategy framework.
+              </div>
+            </div>
+
+            {(() => {
+              const auto = computeAutoRegime(indiaExtras);
+              const liveRegime = (regimeOverride && regimeOverride !== 'auto') ? regimeOverride : (auto?.id || null);
+              const accent = (liveRegime && REGIME_COLOR[liveRegime]) || C.purple;
+              const periods = ['1Y','3Y','5Y','10Y'];
+              const fmtPctLocal = v => (v == null) ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+              const sCagr = backtest?.strategyCagr;
+              const nCagr = backtest?.benchmark?.cagr;
+              const alpha = backtest?.alpha;
+              return (
+                <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+                    <div>
+                      <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Simulated Strategy Backtest (CAGR)</div>
+                      <div style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic', marginTop: 2 }}>
+                        Equal-weight rotation into overweight sectors (allocation ≥ 15%) vs. static Nifty 50.
+                        {backtest?.actualYears != null ? ' Window: ' + backtest.actualYears.toFixed(2) + ' yrs.' : ''}
+                        {liveRegime ? <> · Regime: <span style={{ color: accent, fontWeight: 600 }}>{liveRegime}</span></> : null}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {periods.map(p => (
+                        <button key={p} onClick={() => setBacktestPeriod(p)}
+                          style={{ background: backtestPeriod === p ? C.cyan : 'transparent', border: '1px solid ' + (backtestPeriod === p ? C.cyan : C.border), color: backtestPeriod === p ? '#ffffff' : C.textSec, borderRadius: 6, padding: '4px 12px', fontSize: 12, fontWeight: backtestPeriod === p ? 600 : 500, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>{p}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                    <div style={{ background: 'rgba(16,185,129,0.06)', borderLeft: '3px solid ' + (sCagr != null && sCagr >= 0 ? C.green : C.red), borderRadius: '0 6px 6px 0', padding: '12px 14px' }}>
+                      <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Strategy CAGR</div>
+                      <div className="mono" style={{ fontSize: 22, color: (sCagr != null && sCagr >= 0) ? C.green : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPctLocal(sCagr)}</div>
+                      <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>{backtest?.overweightSectors?.length ? backtest.overweightSectors.length + ' sectors equal-weighted' : 'Loading…'}</div>
+                    </div>
+                    <div style={{ background: 'rgba(37,99,235,0.06)', borderLeft: '3px solid ' + C.blue, borderRadius: '0 6px 6px 0', padding: '12px 14px' }}>
+                      <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Nifty 50 CAGR</div>
+                      <div className="mono" style={{ fontSize: 22, color: (nCagr != null && nCagr >= 0) ? C.blue : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPctLocal(nCagr)}</div>
+                      <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Static benchmark</div>
+                    </div>
+                    <div style={{ background: 'rgba(124,58,237,0.06)', borderLeft: '3px solid ' + (alpha != null && alpha >= 0 ? C.purple : C.red), borderRadius: '0 6px 6px 0', padding: '12px 14px' }}>
+                      <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Alpha vs. Nifty 50</div>
+                      <div className="mono" style={{ fontSize: 22, color: (alpha != null && alpha >= 0) ? C.purple : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPctLocal(alpha)}</div>
+                      <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Strategy − Benchmark</div>
+                    </div>
+                  </div>
+                  {backtest?.overweightSectors?.length > 0 && (
+                    <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6 }}>
+                      {backtest.overweightSectors.map(s => (
+                        <div key={s.index_id} className="mono" style={{ fontSize: 11, color: C.textMut, padding: '4px 8px', background: 'rgba(148,163,184,0.06)', borderRadius: 4 }}>
+                          {s.sector}: <span style={{ color: (s.cagr != null && s.cagr >= 0) ? C.green : C.red, fontWeight: 600 }}>{fmtPctLocal(s.cagr)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 10, fontStyle: 'italic' }}>
+                    {backtest?.method || 'Equal-weight basket of sectors with allocation weight ≥ 15%; CAGR = ((last/first)^(1/years) − 1) × 100. Data source: daily_eyby_data table (2016+).'}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {(() => {
+              const auto = computeAutoRegime(indiaExtras);
+              const effectiveRegime = (regimeOverride && regimeOverride !== 'auto') ? regimeOverride : (auto?.id || null);
+              if (!effectiveRegime) return null;
+              return <AllocationMatrix regimeId={effectiveRegime} isOverride={regimeOverride !== 'auto'} autoRegime={auto} />;
+            })()}
           </div>
         </div>
       );
@@ -2948,15 +3062,7 @@
             </div>
           </div>
 
-          {/* Phase 8.1 — Allocation Strategy Matrix. Auto-derives the regime from live macro data
-              (indiaExtras CPI + IIP YoY), or accepts a manual override from the Control Panel above.
-              Renders the active regime's sector weighting heatmap. Highlighted when manual override active. */}
-          {(() => {
-            const auto = computeAutoRegime(indiaExtras);
-            const effectiveRegime = regimeOverride !== 'auto' ? regimeOverride : (auto?.id || null);
-            if (!effectiveRegime) return null;
-            return <AllocationMatrix regimeId={effectiveRegime} isOverride={regimeOverride !== 'auto'} autoRegime={auto} />;
-          })()}
+          {/* Phase 8.2 — Allocation Matrix relocated to bottom of India Macro Hub. */}
 
           {/* Tier 1: Country Toggle */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -3016,7 +3122,7 @@
           {/* Phase-5: GDP Factor Matrix card REMOVED from sector tabs — moved into the dedicated INDIA MACRO tab. */}
 
           {/* Phase-5: India Macro Hub takes over when in india-macro country. Phase-4 Global Macro Hub same. */}
-          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} indiaExtras={indiaExtras} sectorWeights={sectorWeights} longOnly={longOnly} period={period} customStartISO={customStartISO} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} globalExtras={globalExtras} period={period} customStartISO={customStartISO} /> : (<React.Fragment>
+          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} indiaExtras={indiaExtras} sectorWeights={sectorWeights} longOnly={longOnly} period={period} customStartISO={customStartISO} regimeOverride={regimeOverride} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} globalExtras={globalExtras} period={period} customStartISO={customStartISO} /> : (<React.Fragment>
           {/* KPI Cards — Phase-5: added EpsGrowthCard with 1Y/2Y/3Y/4Y/5Y/7Y/10Y toggle */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
             <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + (filteredStats?.pe || EMPTY_STATS).mean + 'x'} />
