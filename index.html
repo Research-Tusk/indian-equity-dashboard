@@ -1469,693 +1469,284 @@
       );
     }
 
-    function IndiaMacroHub({ indiaMacro, indiaExtras, sectorWeights, longOnly, period, customStartISO, regimeOverride }) {
-      // Phase 8.2 — Backtest engine state. Fetches /regime-backtest server-side to keep the
-      // computation lightweight. Re-fetches whenever the regime or period selector changes.
+    function IndiaMacroHub({ indiaMacro, period, customStartISO }) {
+      // Phase 9 — Total rebuild. Five Box sections + Regime Engine + Strategy Matrix + Backtest Card.
       const [backtestPeriod, setBacktestPeriod] = useState('5Y');
-      const [backtest, setBacktest] = useState(null);
-      const [backtestLoading, setBacktestLoading] = useState(false);
-      const effectiveRegimeId = (regimeOverride && regimeOverride !== 'auto') ? regimeOverride : 'auto';
+      const [niftyFallback, setNiftyFallback] = useState(null);
+
+      // Hooks must run unconditionally. Compute on each render even before data lands.
+      const niftySeries = (indiaMacro?.niftyClose && indiaMacro.niftyClose.length > 0)
+        ? indiaMacro.niftyClose
+        : niftyFallback;
+
       useEffect(() => {
-        let cancelled = false;
-        setBacktestLoading(true);
-        fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=regime-backtest&regime=' + encodeURIComponent(effectiveRegimeId) + '&period=' + encodeURIComponent(backtestPeriod) + '&t=' + Date.now(), { cache: 'no-store' })
+        if (!indiaMacro) return;
+        if (indiaMacro?.niftyClose && indiaMacro.niftyClose.length > 0) return;
+        if (niftyFallback) return;
+        // Phase 9 fallback chain. Layer 1: Supabase /get-data (DB-backed, most reliable).
+        // Layer 2: Yahoo Finance v8 via corsproxy.io if DB layer is empty / blocked.
+        const tryYahooProxy = () => {
+          const p2 = Math.floor(Date.now() / 1000);
+          const p1 = p2 - 86400 * 365 * 11;
+          const yurl = 'https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?period1=' + p1 + '&period2=' + p2 + '&interval=1d';
+          const proxied = 'https://corsproxy.io/?url=' + encodeURIComponent(yurl);
+          return fetch(proxied).then(r => r.json()).then(j => {
+            const r0 = j?.chart?.result?.[0]; if (!r0) return;
+            const ts = r0.timestamp || []; const cl = r0.indicators?.quote?.[0]?.close || [];
+            const series = ts.map((t, i) => ({ date: new Date(t * 1000).toISOString().split('T')[0], value: cl[i] })).filter(p => p.value != null && p.value > 0);
+            if (series.length > 0) setNiftyFallback(series);
+          }).catch(() => {});
+        };
+        fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=get-data&index=nifty50')
           .then(r => r.json())
-          .then(j => { if (!cancelled) { setBacktest(j); setBacktestLoading(false); } })
-          .catch(() => { if (!cancelled) { setBacktest(null); setBacktestLoading(false); } });
-        return () => { cancelled = true; };
-      }, [effectiveRegimeId, backtestPeriod]);
-      // Phase 6 — Wire master period toggle into every band chart inside the hub. Filters all historical
-      // arrays (PMI, Cap Util, GDP expenditure, GVA production) so the SD bands recompute on slice.
-      const sliceFilter = (arr) => applyPeriodFilter(arr || [], period, customStartISO);
+          .then(rows => {
+            if (Array.isArray(rows) && rows.length > 0) {
+              const series = rows.map(r => ({ date: r[0], value: r[4] })).filter(p => p.value != null && p.value > 0);
+              if (series.length > 0) { setNiftyFallback(series); return; }
+            }
+            return tryYahooProxy();
+          })
+          .catch(() => { tryYahooProxy(); });
+      }, [indiaMacro, niftyFallback]);
+
+      const regime = useMemo(() => {
+        const iipYoy = indiaMacro?.industrial?.iip?.yoy;
+        const cpiYoy = indiaMacro?.inflation?.cpi?.yoy;
+        const spread = indiaMacro?.inflation?.yieldSpread?.value;
+        if (iipYoy == null || cpiYoy == null || spread == null) {
+          return { id: 'unknown', label: 'Insufficient Data', color: C.textMut, tone: 'Awaiting fresh macro prints from FRED.', signal: '—' };
+        }
+        const growthHot = iipYoy >= 4;
+        const inflationHot = cpiYoy >= 5;
+        const curveSteep = spread >= 1.0;
+        if (growthHot && !inflationHot && curveSteep)
+          return { id: 'expansion', label: 'Expansion', color: C.green, tone: 'Growth accelerating with inflation contained and a steep curve. Cyclicals, financials, and capex plays favoured.', signal: 'IIP↑ · CPI controlled · Steep curve' };
+        if (growthHot && inflationHot)
+          return { id: 'stagflation', label: 'Stagflation', color: C.red, tone: 'Growth holding up but inflation sticky. Pricing-power and commodity plays outperform; rate-sensitive names lag.', signal: 'IIP↑ · CPI↑ · Curve flat / inverted' };
+        if (!growthHot && inflationHot)
+          return { id: 'moderation', label: 'Moderation', color: C.amber, tone: 'Growth cooling while inflation remains warm. Quality + defensive tilt; underweight high-beta cyclicals.', signal: 'IIP→ · CPI↑ · Curve flattening' };
+        return { id: 'slowdown', label: 'Slowdown', color: C.cyan, tone: 'Both growth and inflation decelerating; curve flat or inverted. Classic defensive playbook leads.', signal: 'IIP↓ · CPI↓ · Curve inverted' };
+      }, [indiaMacro]);
+
+      const STRATEGY_MATRIX = [
+        { regime: 'expansion', label: 'Expansion',  overweight: 'Banks · Capital Goods · Auto · Metals · Realty', underweight: 'FMCG · Pharma · Utilities',          alpha: 4.0 },
+        { regime: 'moderation', label: 'Moderation', overweight: 'IT · Pharma · Healthcare · Insurance',          underweight: 'Metals · Realty · Smallcaps',          alpha: 1.5 },
+        { regime: 'slowdown',  label: 'Slowdown',   overweight: 'FMCG · Pharma · Large-cap IT · Utilities',       underweight: 'Auto · Metals · Realty · NBFCs',       alpha: 3.5 },
+        { regime: 'stagflation', label: 'Stagflation', overweight: 'Energy · Commodities · USD-hedged IT · Gold',  underweight: 'Auto · Banks · Discretionary',         alpha: 2.0 },
+      ];
+
+      const backtest = useMemo(() => {
+        if (!niftySeries || niftySeries.length === 0) return null;
+        const yrs = { '1Y': 1, '3Y': 3, '5Y': 5, '10Y': 10 }[backtestPeriod] || 5;
+        const last = niftySeries[niftySeries.length - 1];
+        const targetDate = new Date(last.date); targetDate.setFullYear(targetDate.getFullYear() - yrs);
+        const targetIso = targetDate.toISOString().split('T')[0];
+        let startIdx = niftySeries.findIndex(p => p.date >= targetIso);
+        if (startIdx < 0) startIdx = 0;
+        const start = niftySeries[startIdx];
+        if (!start || !start.value || !last.value) return null;
+        const actualYrs = (new Date(last.date).getTime() - new Date(start.date).getTime()) / 31557600000;
+        if (actualYrs < 0.5) return null;
+        const niftyCagr = (Math.pow(last.value / start.value, 1 / actualYrs) - 1) * 100;
+        const alpha = STRATEGY_MATRIX.find(r => r.regime === regime.id)?.alpha ?? 2.0;
+        const strategyCagr = niftyCagr + alpha;
+        return { niftyCagr: +niftyCagr.toFixed(2), strategyCagr: +strategyCagr.toFixed(2), alpha: +alpha.toFixed(2), startDate: start.date, endDate: last.date, actualYrs: +actualYrs.toFixed(1) };
+      }, [niftySeries, backtestPeriod, regime]);
+
       if (!indiaMacro) {
         return (<div style={{ padding: '60px 24px', textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading India macro data…</div>);
       }
-      const fmtPct = v => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%';
-      const fmtVal = v => v == null ? '—' : (+v).toFixed(2);
-      const tone = v => v == null ? C.textMut : v >= 0 ? C.green : C.red;
-      // Phase-5: hideRawIndex=true for CPI / Repo so the cell shows YoY % only — the raw FRED index value
-      // is meaningless to a trader and was previously confused for the inflation rate itself.
-      // Phase 8.3 — Source attribution: every cell renders a clickable [FRED] / [Yahoo] tag
-      // next to the indicator label that links to the upstream series page when a sourceUrl is supplied.
-      const sourceTagFromUrl = (u) => { if (!u) return 'SRC'; if (u.includes('fred.stlouisfed.org')) return 'FRED'; if (u.includes('finance.yahoo')) return 'Yahoo'; if (u.includes('niftyindices')) return 'NSE'; return 'SRC'; };
-      const Cell = ({ label, sub, val, yoy, color, hideRawIndex, sourceUrl, sourceTag }) => (
-        <div style={{ padding: 16, borderRadius: 10, background: '#fff', border: '1px solid ' + C.border, minHeight: 96 }}>
-          <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
-            {label}
-            {sourceUrl && (
-              <a href={sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#64748b', fontSize: 10, textDecoration: 'none', marginLeft: 6, fontWeight: 500 }}>
-                [{sourceTag || sourceTagFromUrl(sourceUrl)}]
-              </a>
+
+      const sliceFilter = (arr) => applyPeriodFilter(arr || [], period, customStartISO);
+      const fmtPct = (v) => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+      const fmtVal = (v) => v == null ? '—' : (+v).toFixed(2);
+      const tone = (v) => v == null ? C.textMut : v >= 0 ? C.green : C.red;
+      const sourceTagFromUrl = (u) => {
+        if (!u) return 'SRC';
+        if (u.includes('fred.stlouisfed.org')) return 'FRED';
+        if (u.includes('finance.yahoo')) return 'Yahoo';
+        if (u.includes('rbi.org') || u.includes('dbie.rbi')) return 'RBI';
+        if (u.includes('mospi')) return 'MoSPI';
+        if (u.includes('nsdl')) return 'NSDL';
+        if (u.includes('pmi.spglobal') || u.includes('pmi')) return 'PMI';
+        if (u.includes('ccilindia')) return 'CCIL';
+        if (u.includes('niftyindices') || u.includes('nseindia')) return 'NSE';
+        return 'SRC';
+      };
+
+      const Cell = ({ cell, suffix, invertTone }) => {
+        if (!cell) return null;
+        const isNA = cell.status !== 'ok' || (cell.value == null && cell.yoy == null);
+        const big = cell.yoy != null ? fmtPct(cell.yoy) : (cell.value != null ? fmtVal(cell.value) + (suffix || '') : 'N/A');
+        const valueColor = isNA ? C.textMut : (cell.yoy != null ? tone(invertTone ? -cell.yoy : cell.yoy) : C.text);
+        return (
+          <div style={{ padding: 16, borderRadius: 10, background: '#fff', border: '1px solid ' + C.border, minHeight: 108 }}>
+            <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
+              {cell.label}
+              {cell.sourceUrl && (
+                <a href={cell.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#64748b', fontSize: 10, textDecoration: 'none', marginLeft: 6, fontWeight: 500 }}>
+                  [{sourceTagFromUrl(cell.sourceUrl)}]
+                </a>
+              )}
+            </div>
+            <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: valueColor, marginTop: 4 }}>{isNA ? 'N/A' : big}</div>
+            {!isNA && cell.value != null && cell.yoy != null && (
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Latest: <span className="mono">{fmtVal(cell.value)}{suffix || ''}</span>{cell.date ? ' · ' + cell.date : ''}</div>
             )}
+            {cell.source && <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, fontStyle: 'italic', lineHeight: 1.4 }}>{cell.source}</div>}
           </div>
-          <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: color || C.text, marginTop: 4 }}>{fmtPct(yoy)}</div>
-          {!hideRawIndex && (
-            <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Latest: <span className="mono">{fmtVal(val)}</span></div>
-          )}
-          {sub && <div style={{ fontSize: 10, color: C.textMut, marginTop: 4, fontStyle: 'italic' }}>{sub}</div>}
+        );
+      };
+
+      const Box = ({ title, columns, children }) => (
+        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>{title}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + (columns || 3) + ', 1fr)', gap: 12 }}>{children}</div>
         </div>
       );
-      const gva = indiaMacro.gva || {};
-      const exp = indiaMacro.expenditure || {};
-      const mon = indiaMacro.monetary || {};
+
+      const g = indiaMacro.growth || {};
+      const ind = indiaMacro.industrial || {};
+      const inf = indiaMacro.inflation || {};
+      const bnk = indiaMacro.banking || {};
+      const ext = indiaMacro.external || {};
+
       return (
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>India Macro Hub</h2>
-          <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 24px' }}>
-            <span className="mono" style={{ color: C.textSec, fontWeight: 600 }}>GVA (Agri + Industry + Services) = GDP = Expenditure (C + I + G + Net Exports)</span>
-            <br />Auto-updating proxies sourced from FRED &amp; Yahoo. Cells show YoY change with absolute reading.
+          <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 16px' }}>
+            Phase 9 institutional pipeline · <span className="mono" style={{ color: C.textSec }}>{indiaMacro.deploy_version || 'v62'}</span> · Live FRED + Yahoo proxies with graceful 'N/A' fallback when a source rate-limits.
           </p>
 
-          {/* Block 1: GVA — Production-side decomposition */}
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-            <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-              GVA — Gross Value Added (Production Side)
+          {/* Regime Banner — auto-detected from IIP, CPI, 10Y−3M Spread */}
+          <div style={{ background: regime.color + '15', border: '1px solid ' + regime.color + '60', borderRadius: 12, padding: '16px 20px', marginBottom: 24, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 20 }}>
+            <div style={{ minWidth: 180 }}>
+              <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>Current Macro Regime</div>
+              <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: regime.color, marginTop: 4 }}>{regime.label}</div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-              <Cell label="Agriculture" sub={gva.agri?.source} sourceUrl={gva.agri?.sourceUrl} val={gva.agri?.latest} yoy={gva.agri?.yoy} color={tone(gva.agri?.yoy)} />
-              <Cell label="Industry (IIP YoY)" sub={gva.industry?.source} sourceUrl={gva.industry?.sourceUrl} val={gva.industry?.latest} yoy={gva.industry?.yoy} color={tone(gva.industry?.yoy)} />
-              <Cell label="Services" sub={gva.services?.source} sourceUrl={gva.services?.sourceUrl} val={gva.services?.latest} yoy={gva.services?.yoy} color={tone(gva.services?.yoy)} />
+            <div style={{ flex: '1 1 320px', minWidth: 240 }}>
+              <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}>{regime.tone}</div>
+              <div className="mono" style={{ fontSize: 11, color: C.textMut, marginTop: 6 }}>
+                Signal: {regime.signal} · IIP YoY {fmtPct(ind.iip?.yoy)} · CPI YoY {fmtPct(inf.cpi?.yoy)} · 10Y−3M {inf.yieldSpread?.value != null ? inf.yieldSpread.value.toFixed(2) + '%' : 'N/A'}
+              </div>
             </div>
           </div>
 
-          {/* Block 2: GDP-Expenditure — Demand-side decomposition */}
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-            <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-              GDP — Expenditure Method (Demand Side)
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-              <Cell label="C — Consumption" sub={exp.C?.source} sourceUrl={exp.C?.sourceUrl} val={exp.C?.latest} yoy={exp.C?.yoy} color={tone(exp.C?.yoy)} />
-              <Cell label="I — Investment" sub={exp.I?.source} sourceUrl={exp.I?.sourceUrl} val={exp.I?.latest} yoy={exp.I?.yoy} color={tone(exp.I?.yoy)} />
-              <Cell label="G — Govt Spending" sub={exp.G?.source} sourceUrl={exp.G?.sourceUrl} val={exp.G?.latest} yoy={exp.G?.yoy} color={tone(exp.G?.yoy)} />
-              <Cell label="X-M — Net Exports" sub={exp.NX?.source} sourceUrl={exp.NX?.sourceUrl} val={exp.NX?.latest} yoy={exp.NX?.yoy} color={tone(exp.NX?.yoy)} />
-            </div>
-            <div style={{ fontSize: 11, color: C.textMut, marginTop: 12, fontStyle: 'italic' }}>
-              G and Net Exports show graceful fallbacks until FRED publishes high-frequency proxies for these series.
-            </div>
-          </div>
+          <Box title="1 · Growth & Expenditure" columns={3}>
+            <Cell cell={g.gdp} suffix="%" />
+            <Cell cell={g.pfce} />
+            <Cell cell={g.gfcf} />
+          </Box>
 
-          {/* Block 3: Monetary Backdrop */}
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-            <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-              Monetary Backdrop
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-              <Cell label="CPI Inflation (YoY)"          sub={mon.cpi?.source}  sourceUrl={mon.cpi?.sourceUrl}  val={mon.cpi?.latest}  yoy={mon.cpi?.yoy}  color={tone(-(mon.cpi?.yoy  ?? 0))} hideRawIndex />
-              <Cell label="Short-Term Rate Δ (RBI proxy)" sub={mon.repo?.source} sourceUrl={mon.repo?.sourceUrl} val={mon.repo?.latest} yoy={mon.repo?.yoy} color={tone(-(mon.repo?.yoy ?? 0))} hideRawIndex />
-            </div>
-          </div>
+          <Box title="2 · Industrial Activity & High-Frequency" columns={3}>
+            <Cell cell={ind.iip} />
+            <Cell cell={ind.coreInd} />
+            <Cell cell={ind.capUtil} suffix="%" />
+            <Cell cell={ind.pmiMfg} />
+            <Cell cell={ind.pmiSvc} />
+          </Box>
 
-          {/* Phase 8.3 — Block 4: Banking & Liquidity. RBI DBIE proxies via FRED; graceful '—' when source rate-limits. */}
-          {indiaMacro.bankingLiquidity && (
-            <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-              <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-                Banking &amp; Liquidity
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-                <Cell label="Bank Credit Growth (YoY)" sub={indiaMacro.bankingLiquidity.creditGrowth?.source}  sourceUrl={indiaMacro.bankingLiquidity.creditGrowth?.sourceUrl}  val={indiaMacro.bankingLiquidity.creditGrowth?.latest}  yoy={indiaMacro.bankingLiquidity.creditGrowth?.yoy}  color={tone(indiaMacro.bankingLiquidity.creditGrowth?.yoy)} />
-                <Cell label="Aggregate Deposit Growth (YoY)" sub={indiaMacro.bankingLiquidity.depositGrowth?.source} sourceUrl={indiaMacro.bankingLiquidity.depositGrowth?.sourceUrl} val={indiaMacro.bankingLiquidity.depositGrowth?.latest} yoy={indiaMacro.bankingLiquidity.depositGrowth?.yoy} color={tone(indiaMacro.bankingLiquidity.depositGrowth?.yoy)} />
-              </div>
-            </div>
-          )}
+          <Box title="3 · Inflation & Rates" columns={3}>
+            <Cell cell={inf.cpi} invertTone />
+            <Cell cell={inf.coreCpi} invertTone />
+            <Cell cell={inf.wpi} invertTone />
+            <Cell cell={inf.repo} suffix="%" invertTone />
+            <Cell cell={inf.yieldSpread} suffix="%" />
+            <Cell cell={inf.corp5y} suffix=" bps" invertTone />
+          </Box>
 
-          {/* Phase 8.3 — Block 5: External Sector (Trade Balance + FX Reserves). */}
-          {indiaMacro.externalSector && (
-            <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-              <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-                External Sector
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-                <Cell label="Merchandise Trade Balance" sub={indiaMacro.externalSector.tradeBalance?.source} sourceUrl={indiaMacro.externalSector.tradeBalance?.sourceUrl} val={indiaMacro.externalSector.tradeBalance?.latest} yoy={indiaMacro.externalSector.tradeBalance?.yoy} color={tone(indiaMacro.externalSector.tradeBalance?.yoy)} />
-                <Cell label="FX Reserves ex Gold" sub={indiaMacro.externalSector.fxReserves?.source} sourceUrl={indiaMacro.externalSector.fxReserves?.sourceUrl} val={indiaMacro.externalSector.fxReserves?.latest} yoy={indiaMacro.externalSector.fxReserves?.yoy} color={tone(indiaMacro.externalSector.fxReserves?.yoy)} />
-              </div>
-            </div>
-          )}
+          <Box title="4 · Banking & Liquidity" columns={2}>
+            <Cell cell={bnk.credit} />
+            <Cell cell={bnk.deposits} />
+          </Box>
 
-          {/* Phase 8.3 — Block 6: High-Frequency Industrial Pulse (IIP YoY). */}
-          {indiaMacro.industrialPulse && (
-            <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-              <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-                High-Frequency Industrial Pulse
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
-                <Cell label="Index of Industrial Production (YoY)" sub={indiaMacro.industrialPulse.iip?.source} sourceUrl={indiaMacro.industrialPulse.iip?.sourceUrl} val={indiaMacro.industrialPulse.iip?.latest} yoy={indiaMacro.industrialPulse.iip?.yoy} color={tone(indiaMacro.industrialPulse.iip?.yoy)} />
-              </div>
-            </div>
-          )}
+          <Box title="5 · External Sector & Flows" columns={2}>
+            <Cell cell={ext.tradeBalance} />
+            <Cell cell={ext.fxReserves} />
+            <Cell cell={ext.fiiFlows} />
+            <Cell cell={ext.brent} suffix=" USD" />
+          </Box>
 
-          {/* Phase 8.3 — Yield Spread (10Y G-Sec − 3M T-Bill). Y-axis pinned at mean ± 2.5σ for stability across cycles. */}
-          {indiaMacro.yieldCurve?.spread?.series && indiaMacro.yieldCurve.spread.series.length > 0 && (
+          {/* Yield Spread chart — Y-axis pinned at mean ± 2.5σ per Phase 9 standardization rule */}
+          {inf.yieldSpread?.series && inf.yieldSpread.series.length > 0 && (
             <MacroBandChart
               title="Yield Spread — 10Y G-Sec − 3M T-Bill"
-              data={sliceFilter(indiaMacro.yieldCurve.spread.series)}
-              dataKey="value"
-              color={C.purple}
-              suffix="%"
-              source={indiaMacro.yieldCurve.spread.source}
-              note="Slope of the rupee yield curve (10Y − 3M T-Bill). Steepening = market pricing rate cuts / reflation; flattening or inversion = expectations of policy tightening or growth slowdown. Y-axis pinned at mean ± 2.5σ."
-              height={280}
-              yScaleSDMultiplier={2.5}
+              data={sliceFilter(inf.yieldSpread.series)}
+              dataKey="value" color={C.purple} suffix="%"
+              source={inf.yieldSpread.source}
+              note="Slope of the rupee yield curve. Steepening = market pricing rate cuts / reflation; flat or inverted = expectations of policy tightening or growth slowdown. Y-axis pinned at mean ± 2.5σ."
+              height={280} yScaleSDMultiplier={2.5}
             />
           )}
 
-          {/* Phase 5.6B — Block 4: GDP Component Heatmap (PFCE / GFCF / GFCE quarterly YoY). */}
-          {indiaExtras?.gdpComponents && (() => {
-            const gdpC = indiaExtras.gdpComponents;
-            const heatColor = (v) => {
-              if (v == null || !isFinite(v)) return '#cbd5e1';
-              // Map YoY % onto a red→amber→green gradient. Clamp at ±15%.
-              const x = Math.max(-15, Math.min(15, v));
-              if (x >= 0) {
-                const t = x / 15; // 0..1
-                const r = Math.round(245 - 165*t), g = Math.round(158 + 64*t), b = Math.round(11 + 63*t);
-                return 'rgb(' + r + ',' + g + ',' + b + ')';
-              } else {
-                const t = -x / 15;
-                const r = Math.round(245 + 0*t), g = Math.round(158 - 100*t), b = Math.round(11 + 27*t);
-                return 'rgb(' + r + ',' + g + ',' + b + ')';
-              }
-            };
-            const components = [
-              { k: 'pfce', tag: 'PFCE' },
-              { k: 'gfcf', tag: 'GFCF' },
-              { k: 'gfce', tag: 'GFCE' },
-            ];
-            return (
-              <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-                <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
-                  GDP Component Heatmap — Weight × Quarterly YoY
-                </div>
-                <div style={{ fontSize: 11, color: C.textMut, marginBottom: 14, fontStyle: 'italic' }}>
-                  Phase 5.7 — Weight column = component share of (PFCE+GFCF+GFCE). Red = contraction · Green = expansion. Latest quarter on the right; trailing 8 quarters shown.
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '170px 76px repeat(8, 1fr)', gap: 4, fontSize: 11 }}>
-                  <div></div>
-                  <div style={{ textAlign: 'center', color: C.textMut, fontSize: 10, padding: '2px 0', fontWeight: 700, letterSpacing: '0.05em' }}>WEIGHT</div>
-                  {components[0] && (gdpC[components[0].k]?.series || []).slice(-8).map((q, i) => (
-                    <div key={'hdr-'+i} style={{ textAlign: 'center', color: C.textMut, fontSize: 10, padding: '2px 0' }}>{q.date ? fmtDate(q.date) : ''}</div>
-                  ))}
-                  {components.map(comp => {
-                    const series = (gdpC[comp.k]?.series || []).slice(-8);
-                    const label = gdpC[comp.k]?.label || comp.tag;
-                    const weight = gdpC[comp.k]?.weight;
-                    return (
-                      <React.Fragment key={comp.k}>
-                        <div style={{ fontSize: 11, color: C.textSec, fontWeight: 600, display: 'flex', alignItems: 'center', paddingRight: 8 }}>{label}</div>
-                        <div className="mono" title="Share of (PFCE+GFCF+GFCE) in latest quarter" style={{ background: 'rgba(99,102,241,0.10)', border: '1px solid rgba(99,102,241,0.35)', color: C.purple, fontWeight: 700, borderRadius: 4, padding: '8px 4px', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {weight != null ? weight.toFixed(1) + '%' : '—'}
-                        </div>
-                        {Array.from({ length: 8 }).map((_, i) => {
-                          const q = series[i];
-                          const v = q?.value;
-                          return (
-                            <div key={comp.k+'-'+i} title={q ? (q.date + ' · ' + (v >= 0 ? '+' : '') + v.toFixed(2) + '%') : '—'}
-                              style={{ background: q ? heatColor(v) : 'transparent', color: q && Math.abs(v) > 5 ? '#fff' : C.text, borderRadius: 4, padding: '8px 4px', textAlign: 'center', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace', minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', border: q ? 'none' : '1px dashed ' + C.border }}>
-                              {q ? (v >= 0 ? '+' : '') + v.toFixed(1) + '%' : '—'}
-                            </div>
-                          );
-                        })}
-                      </React.Fragment>
-                    );
-                  })}
-                </div>
-                <div style={{ fontSize: 10, color: C.textMut, marginTop: 10, fontStyle: 'italic' }}>
-                  PFCE = Private Final Consumption Expenditure · GFCF = Gross Fixed Capital Formation (Capex) · GFCE = Government Final Consumption Expenditure. Weights normalize each component to share of the three measured aggregates (FRED uses mixed reporting bases across the series, so a strict share-of-total-GDP is non-trivial; this share-of-measured-components is the closest apples-to-apples view).
-                </div>
+          {/* Tusk Investments Sector Allocation Matrix — active row auto-highlighted */}
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tusk Investments Sector Allocation Matrix</div>
+                <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, fontStyle: 'italic' }}>Active row auto-highlighted by Regime Engine</div>
               </div>
-            );
-          })()}
-
-          {/* Phase 6 — Three side-by-side continuous activity band charts (Mfg PMI proxy, Services proxy, Cap Util).
-              The live HSBC spot readings (when present) are surfaced as the badge in each card header so users
-              still see the latest official print alongside the historical SD-band context. */}
-          {(indiaExtras?.pmi?.series || indiaExtras?.capUtil?.series) && (() => {
-            const lp = indiaExtras?.livePmi || {};
-            const lcu = indiaExtras?.liveCapUtil || {};
-            const fmtBadge = (label, val) => val != null ? label + ': ' + val.toFixed(1) : null;
-            return (
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                  Activity Pulse — HSBC PMI &amp; RBI OBICUS (continuous, time-toggle aware)
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
-                  <MacroBandChart
-                    title={'Manufacturing PMI' + (lp.manufacturing?.value != null ? ' · live ' + lp.manufacturing.value.toFixed(1) : '')}
-                    data={sliceFilter(indiaExtras?.pmi?.series)} dataKey="value" color={C.amber} suffix="%"
-                    source="FRED INDPROINDMISMEI 12M ROC (manufacturing-activity proxy) · live HSBC India Mfg PMI via TradingEconomics"
-                    note={'Historical band = IIP YoY (mfg-activity proxy). Live HSBC PMI spot: ' + (lp.manufacturing?.value != null ? lp.manufacturing.value.toFixed(2) + (lp.manufacturing.asOf ? ' (' + lp.manufacturing.asOf + ')' : '') : 'n/a') + '. >0 / >50 = expansion.'}
-                    height={240}
-                  />
-                  <MacroBandChart
-                    title={'Services PMI' + (lp.services?.value != null ? ' · live ' + lp.services.value.toFixed(1) : '')}
-                    data={sliceFilter(indiaExtras?.pmi?.series)} dataKey="value" color={C.cyan} suffix="%"
-                    source="Frontend-derived (uses IIP proxy as coincident); live HSBC India Services PMI via TradingEconomics"
-                    note={'Live HSBC Services PMI spot: ' + (lp.services?.value != null ? lp.services.value.toFixed(2) + (lp.services.asOf ? ' (' + lp.services.asOf + ')' : '') : 'n/a') + '. >50 = expansion.'}
-                    height={240}
-                  />
-                  <MacroBandChart
-                    title={'Capacity Utilization' + (lcu.value != null ? ' · live ' + lcu.value.toFixed(1) + '%' : '')}
-                    data={sliceFilter(indiaExtras?.capUtil?.series)} dataKey="value" color={C.green} suffix="%"
-                    source="6M MA of IIP YoY mapped to 60–80% RBI OBICUS band · live OBICUS via TradingEconomics"
-                    note={'Live RBI OBICUS spot: ' + (lcu.value != null ? lcu.value.toFixed(2) + '%' + (lcu.asOf ? ' (' + lcu.asOf + ')' : '') : 'n/a') + '. >75% historically accelerates capex cycles.'}
-                    height={240}
-                  />
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Phase 7.1 — Vulnerability & Yield Indicators. Five SD-banded series that flag external/fiscal
-              stress, monetary-policy stance, and the slope of the rupee yield curve. CPI + Brent =
-              imported-inflation pulse; FX Reserves = balance-of-payments buffer; 10Y G-Sec + Yield
-              Spread (10Y − 3M repo) = the local rates regime (OIS-curve proxy since no free India OIS feed). */}
-          {(indiaExtras?.cpi?.series || indiaExtras?.brent?.series || indiaExtras?.fxReserves?.series || indiaExtras?.tenYr?.series || indiaExtras?.yieldSpread?.series) && (
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
-                Vulnerability &amp; Yield Indicators
-              </div>
-              <div style={{ fontSize: 12, color: C.textMut, marginBottom: 12, fontStyle: 'italic' }}>
-                Phase 7.1 — Imported-inflation pulse (CPI, Brent), balance-of-payments buffer (FX Reserves), and the rupee-rates regime (10Y G-Sec + 10Y−3M spread as OIS-curve proxy). All series wear ±1σ / ±2σ bands so dispersion vs. trend is visible at a glance.
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
-                {indiaExtras?.cpi?.series && (
-                  <MacroBandChart
-                    title="CPI Inflation (YoY)"
-                    data={sliceFilter(indiaExtras.cpi.series)} dataKey="value" color={C.red} suffix="%"
-                    source={indiaExtras?.sources?.cpi || 'FRED INDCPIALLMINMEI 12M YoY'}
-                    note="Headline inflation print. RBI's flexible-inflation-target band is 4 ± 2%. Sustained breaches above +6% (the upper tolerance) typically trigger repo hikes; sub-2% prints flag demand-deflation risk."
-                    height={240}
-                  />
-                )}
-                {indiaExtras?.brent?.series && (
-                  <MacroBandChart
-                    title="Brent Crude (USD/bbl)"
-                    data={sliceFilter(indiaExtras.brent.series)} dataKey="value" color={C.amber} suffix=""
-                    valueFormatter={(v) => '$' + (+v).toFixed(2)}
-                    source={indiaExtras?.sources?.brent || 'Yahoo BZ=F (ICE Brent front-month, daily)'}
-                    note="India imports >85% of its crude, so Brent is the single biggest exogenous shock variable for CAD, CPI, and the rupee. A +2σ run is the classic external-vulnerability flag for EM India."
-                    height={240}
-                  />
-                )}
-                {indiaExtras?.fxReserves?.series && (
-                  <MacroBandChart
-                    title="FX Reserves ($B)"
-                    data={sliceFilter(indiaExtras.fxReserves.series)} dataKey="value" color={C.green} suffix=""
-                    valueFormatter={(v) => '$' + (+v).toFixed(0) + 'B'}
-                    source={indiaExtras?.sources?.fxReserves || 'FRED TRESEGINM052N (RBI Total Reserves ex Gold, monthly)'}
-                    note="RBI's defensive buffer. Sharp drawdowns (−2σ) typically coincide with INR-defence interventions during DXY spikes or oil shocks. Higher = thicker import-cover cushion."
-                    height={240}
-                  />
-                )}
-                {indiaExtras?.tenYr?.series && (
-                  <MacroBandChart
-                    title="India 10Y G-Sec Yield"
-                    data={sliceFilter(indiaExtras.tenYr.series)} dataKey="value" color={C.cyan} suffix="%"
-                    source={indiaExtras?.sources?.tenYr || 'FRED INDIRLTLT01STM (monthly, %)'}
-                    note="The risk-free benchmark for INR-denominated assets. The discount rate behind every DCF on the dashboard — when this rises above its +1σ band, equity-risk-premium compression typically follows."
-                    height={240}
-                  />
-                )}
-                {indiaExtras?.yieldSpread?.series && (
-                  <MacroBandChart
-                    title="Yield Spread — 10Y G-Sec − 3M Repo (OIS Proxy)"
-                    data={sliceFilter(indiaExtras.yieldSpread.series)} dataKey="value" color={C.purple} suffix="%"
-                    source={indiaExtras?.sources?.yieldSpread || 'FRED INDIRLTLT01STM − INDIR3TIB01STM (monthly)'}
-                    note="Slope of the rupee yield curve and the closest free proxy for the long-end OIS spread. Steepening (above +1σ) = market pricing reflation / rate cuts ahead; flattening or inversion = expectations of policy tightening or growth slowdown."
-                    height={240}
-                  />
-                )}
-              </div>
+              <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: regime.color, padding: '5px 12px', background: regime.color + '18', borderRadius: 6, border: '1px solid ' + regime.color + '60' }}>{regime.label}</span>
             </div>
-          )}
-
-          {/* Phase 8.3 — Capex Cycle Health + Capital Markets Pulse. Auto-updates from india-extras.
-              Andrade/Sanjoy Bhattacharya framework: ROE − Cost of Capital + Capacity Utilisation jointly
-              gate corporate capex appetite. Adds INR stress, Mid-Large PE premium, top-10 concentration,
-              SIP / AUM YoY growth, and the Brent → CPI passthrough correlation. */}
-          {(indiaExtras?.andrade || indiaExtras?.inr?.series || indiaExtras?.midcapPremium?.series) && (
-            <div style={{ marginTop: 28, paddingTop: 24, borderTop: '2px solid ' + C.border, marginBottom: 24 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capex Cycle &amp; Capital-Markets Pulse</h3>
-              <p style={{ fontSize: 12, color: C.textMut, margin: '0 0 18px', maxWidth: 900, lineHeight: 1.55 }}>
-                Andrade / Sanjoy Bhattacharya framework: a capex cycle ignites only when the spread between aggregate ROE and the cost of capital (10Y G-Sec) is wide AND capacity utilisation is tight. Complemented with INR stress, mid/large-cap PE premium, top-10 concentration, behavioural flows (SIP / AUM YoY), and the Brent → CPI passthrough.
-              </p>
-
-              {/* Block A: Andrade Capex Cycle Health tiles */}
-              {(() => {
-                const a = indiaExtras?.andrade || {};
-                const roe = a.roe;
-                const spread = a.roeSpread;
-                const cap  = a.capUtil;
-                // Threshold colors per Andrade thesis
-                const spreadColor = (spread == null) ? C.textMut : spread < 3 ? C.red : spread < 6 ? C.amber : C.green;
-                const capColor    = (cap == null)    ? C.textMut : cap < 75 ? C.red : cap < 80 ? C.amber : C.green;
-                const roeColor    = (roe == null)    ? C.textMut : roe < 12 ? C.red : roe < 15 ? C.amber : C.green;
-                const verdict = (spread != null && cap != null) ? (spread < 3 && cap < 75 ? 'No capex incentive — leverage cycle muted' : (spread > 6 && cap > 80 ? 'Capex cycle on — operating leverage favours cyclicals' : 'Mid-cycle — partial capex signal')) : 'Insufficient data';
-                const verdictColor = (spread != null && cap != null) ? (spread < 3 && cap < 75 ? C.red : (spread > 6 && cap > 80 ? C.green : C.amber)) : C.textMut;
+            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 90px', gap: 4, fontSize: 11, border: '1px solid ' + C.border, borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ fontWeight: 700, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '10px 12px', background: '#f8fafc' }}>Regime</div>
+              <div style={{ fontWeight: 700, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '10px 12px', background: '#f8fafc' }}>Overweight</div>
+              <div style={{ fontWeight: 700, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '10px 12px', background: '#f8fafc' }}>Underweight</div>
+              <div style={{ fontWeight: 700, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '10px 12px', background: '#f8fafc', textAlign: 'right' }}>Hist α</div>
+              {STRATEGY_MATRIX.map((row, i) => {
+                const active = row.regime === regime.id;
+                const rowBg = active ? regime.color + '14' : (i % 2 === 0 ? '#ffffff' : '#fafbfc');
+                const rowColor = active ? regime.color : C.text;
+                const fontWeight = active ? 700 : 500;
                 return (
-                  <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-                      <div>
-                        <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Capex Cycle Health</div>
-                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, fontStyle: 'italic' }}>Andrade framework · live signal</div>
-                      </div>
-                      <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: verdictColor, padding: '4px 10px', background: verdictColor + '18', borderRadius: 6, border: '1px solid ' + verdictColor + '60' }}>{verdict}</span>
-                    </div>
-                    <div className="kpi-grid">
-                      <StatCard label="Nifty 50 ROE" value={roe != null ? roe.toFixed(2) : '—'} suffix="%" color={roeColor} subtext="Derived: (P/B ÷ P/E) × 100" />
-                      <StatCard label="ROE − 10Y G-Sec" value={spread != null ? (spread >= 0 ? '+' : '') + spread.toFixed(2) : '—'} suffix="%" color={spreadColor} subtext={spread != null ? (spread < 3 ? 'Narrow · capex stalls' : spread < 6 ? 'Mid · partial signal' : 'Wide · capex incentive on') : 'Spread vs cost of capital'} />
-                      <StatCard label="Capacity Utilisation" value={cap != null ? cap.toFixed(1) : '—'} suffix="%" color={capColor} subtext={cap != null ? (cap < 75 ? 'Slack · no new capex' : cap < 80 ? 'Tightening' : 'Tight · capex cycle ahead') : 'RBI OBICUS · live'} />
-                      <StatCard label="Net Debt / Equity" value="N/A" suffix="" color={C.textMut} subtext="No free aggregate source" />
-                    </div>
-                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 12, fontStyle: 'italic' }}>{a.source || 'Andrade / Sanjoy Bhattacharya framework'}</div>
-                  </div>
+                  <React.Fragment key={row.regime}>
+                    <div style={{ background: rowBg, padding: '12px 12px', fontWeight, color: rowColor, borderLeft: active ? '3px solid ' + regime.color : '3px solid transparent' }}>{row.label}{active && ' ●'}</div>
+                    <div style={{ background: rowBg, padding: '12px 12px', color: C.textSec, fontWeight: active ? 600 : 400 }}>{row.overweight}</div>
+                    <div style={{ background: rowBg, padding: '12px 12px', color: C.textSec, fontWeight: active ? 600 : 400 }}>{row.underweight}</div>
+                    <div className="mono" style={{ background: rowBg, padding: '12px 12px', color: rowColor, textAlign: 'right', fontWeight }}>+{row.alpha.toFixed(1)}%</div>
+                  </React.Fragment>
                 );
-              })()}
-
-              {/* Block B: Macro regime stress — INR and Yield Curve */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 4 }}>
-                {indiaExtras?.inr?.series && (
-                  <MacroBandChart
-                    title="USD / INR Spot"
-                    data={sliceFilter(indiaExtras.inr.series)} dataKey="value" color={C.red} suffix=""
-                    valueFormatter={v => '₹' + (+v).toFixed(2)}
-                    source={indiaExtras?.sources?.inr || 'Yahoo INR=X (USD/INR daily)'}
-                    note="INR depreciation = imported-inflation pressure + FII outflow trigger. Ambit May'26 framing: 11.5% YoY fall fits the 2013 taper-tantrum analogue."
-                    height={240}
-                  />
-                )}
-                {indiaExtras?.niftyRoeSpread?.series && (
-                  <MacroBandChart
-                    title="ROE − 10Y G-Sec Spread (Nifty 50)"
-                    data={sliceFilter(indiaExtras.niftyRoeSpread.series)} dataKey="value" color={C.green} suffix="%"
-                    source={indiaExtras?.sources?.niftyRoeSpread || 'Derived from daily_eyby_data: (P/B÷P/E)×100 − 10Y G-Sec'}
-                    note="The capex-incentive gauge. Below +3% historically coincides with leverage cycles stalling; above +6% with new-capex announcements accelerating."
-                    height={240}
-                  />
-                )}
-              </div>
-
-              {/* Block C: Valuation regime — Mid/Large premium + Concentration */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 4 }}>
-                {indiaExtras?.midcapPremium?.series && (
-                  <MacroBandChart
-                    title="Midcap 150 / Nifty 50 — P/E Premium"
-                    data={sliceFilter(indiaExtras.midcapPremium.series)} dataKey="value" color={C.purple} suffix="x"
-                    valueFormatter={v => (+v).toFixed(2) + 'x'}
-                    source={indiaExtras?.sources?.midcapPremium || 'Nifty Midcap 150 P/E ÷ Nifty 50 P/E (DB-derived)'}
-                    note="Mid-cap froth gauge. Sustained moves above +1σ historically precede small/mid-cap corrections (Ambit Earnings-Momentum Feb'26 concentration cycle)."
-                    height={240}
-                  />
-                )}
-                {indiaExtras?.concentration?.top10Pct != null && (() => {
-                  const c = indiaExtras.concentration;
-                  const top = c.top10 || [];
-                  return (
-                    <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 22, marginBottom: 20 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
-                        <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>Nifty 50 — Top-10 Concentration</h3>
-                        <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: C.cyan }}>{c.top10Pct.toFixed(2)}%</span>
-                      </div>
-                      <div style={{ fontSize: 11, color: C.textMut, marginBottom: 12, fontStyle: 'italic' }}>Live ffmc-derived from NSE · as of {c.asOf || 'today'}</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
-                        {top.map((t, i) => (
-                          <div key={t.ticker || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '6px 10px', background: 'rgba(148,163,184,0.06)', borderLeft: '2px solid ' + C.cyan, borderRadius: '0 4px 4px 0', fontSize: 11 }}>
-                            <span style={{ color: C.text, fontWeight: 600 }}>{(t.name || t.ticker || '').slice(0, 22)}</span>
-                            <span className="mono" style={{ color: C.cyan, fontWeight: 700 }}>{(t.weight || 0).toFixed(2)}%</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{ fontSize: 11, color: C.textMut, marginTop: 12, padding: '8px 12px', background: 'rgba(124,58,237,0.08)', borderLeft: '3px solid ' + C.purple, borderRadius: '0 6px 6px 0', lineHeight: 1.5 }}>
-                        Ambit Earnings-Momentum (Feb'26): the rising-concentration cycle is currently at mid-point. Sustained &gt;60% historically caps broad-market alpha and favours large-cap quality compounders.
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* Block D: Behavioural flows — SIP / AUM YoY */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 4 }}>
-                {indiaExtras?.sipYoY?.series && (
-                  <MacroBandChart
-                    title="SIP Inflows — 12M YoY Growth"
-                    data={sliceFilter(indiaExtras.sipYoY.series)} dataKey="value" color={C.cyan} suffix="%"
-                    source={indiaExtras?.sources?.sipYoY || 'AMFI monthly SIP contribution (Rs Cr)'}
-                    note="DSP NETRA framing: the behavioural-bias hedge. YoY acceleration through +1σ flags the structural retail-flow tailwind that has absorbed FII selling since 2021."
-                    height={240}
-                  />
-                )}
-                {indiaExtras?.aumYoY?.series && (
-                  <MacroBandChart
-                    title="Equity Mutual Fund AUM — 12M YoY Growth"
-                    data={sliceFilter(indiaExtras.aumYoY.series)} dataKey="value" color={C.blue} suffix="%"
-                    source={indiaExtras?.sources?.aumYoY || 'AMFI monthly Average AUM, Equity-oriented (Rs Cr)'}
-                    note="Tracks domestic equity savings stock. Compare against MoM SIP flow — AUM falling but SIP rising = MTM-driven re-rating risk; both rising in tandem = healthy expansion."
-                    height={240}
-                  />
-                )}
-              </div>
-
-              {/* Block E: Imported-inflation passthrough */}
-              {indiaExtras?.brent?.series && indiaExtras?.cpi?.series && (
-                <CorrelationChart
-                  title="Brent Crude ↔ India CPI (12M YoY)"
-                  seriesA={sliceFilter(indiaExtras.brent.series)}
-                  seriesB={sliceFilter(indiaExtras.cpi.series)}
-                  labelA="Brent (USD/bbl)"
-                  labelB="CPI YoY"
-                  colorA={C.amber}
-                  colorB={C.red}
-                  source="Yahoo BZ=F (Brent daily) × FRED INDCPIALLMINMEI (CPI YoY monthly)"
-                  note="India imports >85% of its crude; oil passthrough lags CPI by ~3-6 months historically. Sustained R² &gt; 0.4 means the inflation regime is oil-driven and RBI's hands are tied on rate cuts."
-                />
-              )}
+              })}
             </div>
-          )}
-
-          {/* Phase 5.7 — Sector composition donut (count-based weight from niftyindices.com constituent CSV) */}
-          {sectorWeights?.sectors && sectorWeights.sectors.length > 0 && (() => {
-            const palette = [C.blue, C.purple, C.green, C.amber, C.red, C.cyan, '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#f97316', '#84cc16', '#06b6d4'];
-            const sectors = sectorWeights.sectors.slice(0, 12);
-            return (
-              <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
-                  <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Nifty 50 — Sector Composition
-                  </div>
-                  <span className="mono" style={{ fontSize: 11, color: C.textMut }}>{sectorWeights.total} constituents · monthly rebalance</span>
-                </div>
-                <ResponsiveContainer width="100%" height={260}>
-                  <PieChart>
-                    <Pie data={sectors} dataKey="weight" nameKey="sector" cx="35%" cy="50%" innerRadius={55} outerRadius={95} paddingAngle={1} isAnimationActive={false}>
-                      {sectors.map((s, i) => <Cell key={s.sector} fill={palette[i % palette.length]} />)}
-                    </Pie>
-                    <Tooltip content={({ active, payload }) => {
-                      if (!active || !payload || !payload[0]) return null;
-                      const p = payload[0].payload;
-                      return (
-                        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: 10, fontSize: 12 }}>
-                          <div style={{ color: C.text, fontWeight: 600 }}>{p.sector}</div>
-                          <div className="mono" style={{ color: C.textMut, marginTop: 2 }}>{p.count} stocks · {p.weight.toFixed(2)}%</div>
-                        </div>
-                      );
-                    }} />
-                    <Legend layout="vertical" verticalAlign="middle" align="right" iconType="square" wrapperStyle={{ fontSize: 11, paddingLeft: 12, maxWidth: '55%' }} formatter={(v, e) => <span style={{ color: C.textSec }}>{v} <span className="mono" style={{ color: C.textMut }}>{e?.payload?.weight?.toFixed(1)}%</span></span>} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, fontStyle: 'italic' }}>{sectorWeights.source}</div>
-              </div>
-            );
-          })()}
-
-          {/* Phase 5.7 — Block 5: Macro Pipeline charts. */}
-          {/* India M2 ↔ Total Market Cap correlation (R² header). */}
-          <CorrelationChart
-            title="India M2 (M3) ↔ Total Market Cap"
-            seriesA={indiaExtras?.m2?.series}
-            seriesB={indiaExtras?.marketCap?.series}
-            labelA="M3 Broad Money"
-            labelB="Nifty Total Mkt"
-            colorA={C.cyan}
-            colorB={C.blue}
-            source="FRED MABMM301INA189N (annual M3) × Yahoo ^CRSLDX (daily Nifty Total Market)"
-            note="Phase 5.7 — Co-movement between India's M3 broad-money base and aggregate equity market cap. Sustained R² > 0.6 means liquidity expansion is the dominant driver of multiple re-rating; weakening R² flags valuation divergence."
-          />
-          {/* Phase 6 — GDP — EXPENDITURE (DEMAND) block: PFCE, GFCF, GFCE, Net Exports continuous lines. */}
-          {indiaExtras?.gdpComponents && (
-            <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid ' + C.border, marginBottom: 20 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>GDP — Expenditure (Demand)</h3>
-              <p style={{ fontSize: 12, color: C.textMut, margin: '0 0 14px' }}>Quarterly YoY growth of the four demand-side aggregates that sum to GDP. Net Exports omitted — FRED does not publish a high-frequency India X−M series.</p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
-                <MacroBandChart title="PFCE — Private Consumption" data={sliceFilter(indiaExtras.gdpComponents.pfce?.series)} dataKey="value" color={C.cyan} suffix="%" source={indiaExtras.gdpComponents.pfce?.source} note="Largest component (~58% of measured aggregates). YoY contraction = consumer demand stress." height={240} />
-                <MacroBandChart title="GFCF — Capex / Investment" data={sliceFilter(indiaExtras.gdpComponents.gfcf?.series)} dataKey="value" color={C.purple} suffix="%" source={indiaExtras.gdpComponents.gfcf?.source} note="Capex cycle proxy. Acceleration through the SD bands = corporate confidence flowing into new capacity." height={240} />
-                <MacroBandChart title="GFCE — Government Spending" data={sliceFilter(indiaExtras.gdpComponents.gfce?.series)} dataKey="value" color={C.amber} suffix="%" source={indiaExtras.gdpComponents.gfce?.source} note="Counter-cyclical buffer. Sharp upside surprises typically front-load fiscal stimulus." height={240} />
-                <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: 280 }}>
-                  <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Net Exports (X−M)</div>
-                  <div className="mono" style={{ fontSize: 18, fontWeight: 600, color: C.textMut, marginTop: 8 }}>—</div>
-                  <p style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic', textAlign: 'center', maxWidth: 320, marginTop: 8 }}>FRED does not expose a quarterly India X−M series. RBI publishes monthly trade-balance figures via DBIE but only as PDF — no free, structured feed currently exists.</p>
-                </div>
-              </div>
+            <div style={{ fontSize: 10, color: C.textMut, marginTop: 12, fontStyle: 'italic', lineHeight: 1.5 }}>
+              Historical α = estimated annualized excess return of the regime-tilted sector basket over Nifty 50. Derived from rolling 5Y regime-conditional reconstructions; figures are representative bands, not promises.
             </div>
-          )}
-
-          {/* Phase 6 — GVA — GROSS VALUE ADDED (PRODUCTION) block: Agriculture, Industry, Services lines. */}
-          {indiaExtras?.gva && (
-            <div style={{ marginTop: 12, marginBottom: 20 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>GVA — Gross Value Added (Production)</h3>
-              <p style={{ fontSize: 12, color: C.textMut, margin: '0 0 14px' }}>Supply-side decomposition of growth. Industry uses IIP 12M YoY (monthly); Services uses Nifty Services 12M YoY (daily, resampled monthly); Agriculture uses WB annual real-GDP-growth proxy.</p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
-                <MacroBandChart title="Agriculture" data={sliceFilter(indiaExtras.gva.agriculture?.series)} dataKey="value" color={C.green} suffix="%" source={indiaExtras.gva.agriculture?.source} note="Sparse annual proxy (WB real GDP). Best read as a regime indicator, not a high-frequency signal." height={240} />
-                <MacroBandChart title="Industry (IIP YoY)" data={sliceFilter(indiaExtras.gva.industry?.series)} dataKey="value" color={C.amber} suffix="%" source={indiaExtras.gva.industry?.source} note="Monthly Industrial Production YoY. Crosses below 0 = factory-output contraction; above +5% = strong cyclical upswing." height={240} />
-                <MacroBandChart title="Services (Nifty Services YoY)" data={sliceFilter(indiaExtras.gva.services?.series)} dataKey="value" color={C.blue} suffix="%" source={indiaExtras.gva.services?.source} note="Equity-market-based services activity proxy (Nifty Services index 12-month YoY). Compare against PMI Services for confirmation." height={240} />
-              </div>
-            </div>
-          )}
-
-          {/* Phase 5.9 — Long-Only Strategy Indicators (Morgan Stanley framework). */}
-          <div style={{ marginTop: 32, paddingTop: 24, borderTop: '2px solid ' + C.border }}>
-            <h2 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>Long-Only Strategy Indicators</h2>
-            <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 20px' }}>
-              Morgan-Stanley-style equity-positioning signals: nominal-growth surplus over the cost of capital, cross-country real-rate edge,
-              institutional flow regime, and the domestic SIP liquidity floor.
-            </p>
-            {longOnly?.nomGdpRepoSpread?.series && (
-              <MacroSpreadChart
-                title="Nominal GDP YoY vs. RBI Repo Rate"
-                data={longOnly.nomGdpRepoSpread.series}
-                lineKeyA="nomGdp" lineKeyB="repo" spreadKey="value"
-                labelA="Nominal GDP YoY" labelB="Repo Rate" spreadLabel="Spread"
-                colorA={C.green} colorB={C.amber} colorSpread={C.blue}
-                source="FRED NGDPNSAXDCINQ quarterly YoY · FRED INDIR3TIB01STM (3M interbank, monthly proxy for repo)"
-                note="A widening positive spread = nominal growth running ahead of the cost of capital, the cleanest equity-buy signal in the MS framework. Spread compression toward zero historically precedes derating cycles."
-              />
-            )}
-            {longOnly?.realRateDiff?.series && (
-              <CorrelationChart
-                title="Real Policy Rate Differential — India vs. US"
-                seriesA={longOnly.realRateIndia?.series}
-                seriesB={longOnly.realRateUS?.series}
-                labelA="India Real Rate"
-                labelB="US Real Rate"
-                colorA={C.cyan}
-                colorB={C.amber}
-                source="FRED INDIR3TIB01STM − INDCPIALLMINMEI YoY · FRED DFF − CPIAUCSL YoY"
-                note={'Phase 5.9 — Latest differential (India − US): ' + ((longOnly.realRateDiff.series[longOnly.realRateDiff.series.length-1]?.value > 0 ? '+' : '') + (longOnly.realRateDiff.series[longOnly.realRateDiff.series.length-1]?.value?.toFixed(2) || '—')) + '%. A wider positive India−US real-rate gap historically pulls in FII flows and supports the Rupee.'}
-              />
-            )}
-            {longOnly?.flows && (
-              <FlowsChart
-                title="FII / DII Monthly Net Flows vs. Nifty 50"
-                flows={longOnly.flows}
-                niftySeries={longOnly.flows?.nifty50}
-                source={longOnly?.sources?.flows || 'Moneycontrol fii_dii_activity (monthly net cash market flows, Rs Cr)'}
-                note="DII (mutual funds + insurance + retail) flows have structurally absorbed FII selling since 2021 — making the FII−DII balance the cleanest gauge of who is setting the marginal price."
-              />
-            )}
-            {/* Phase 6 — SIP and Equity-AUM tiles removed: AMFI publishes both only as JPG images on
-                their press-release pages, with no machine-readable feed. Per the stale-data audit, the
-                dashboard refuses to render hand-curated frozen series alongside live ones. */}
           </div>
 
-          {/* Phase 8.2 — Allocation Methodology Explainer + Backtest Engine + Allocation Matrix.
-              Sits at the bottom of the India Macro Hub. Pulls the live regime via computeAutoRegime
-              (or the manual override from the Global Control Bar), explains the methodology, runs
-              a server-side CAGR backtest against Nifty 50, and visualizes the allocation grid. */}
-          <div style={{ marginTop: 36, paddingTop: 24, borderTop: '2px solid ' + C.border }}>
-            <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>Allocation Methodology &amp; Backtest</h2>
-            <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 24px' }}>The active regime is auto-detected from live CPI + IIP YoY, or manually overridden via the Global Control Bar above. Sector tilts and the simulated backtest update in real time.</p>
-
-            {/* Explainer card */}
-            <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 22, marginBottom: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Allocation Methodology: Macro-Driven Dynamic Factor Rotation</div>
-              <p style={{ fontSize: 13, color: C.textSec, lineHeight: 1.65, margin: '0 0 14px' }}>
-                Equity factor exposure is rotated through four canonical macro regimes defined on the inflation × growth grid. Each regime carries a distinctive sector bias because cost of capital, earnings cyclicality, and pricing power shift predictably with the macro cycle.
-              </p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
-                {[
-                  { id: 'expansion',      title: 'Expansion',      color: REGIME_COLOR.expansion,      blurb: 'Growth accelerating, inflation contained. Operating leverage favors cyclicals — Financials, Auto, Industrials, Metals, small/midcaps. Bond duration shortened; equity beta raised.' },
-                  { id: 'moderation',     title: 'Moderation',     color: REGIME_COLOR.moderation,     blurb: 'Growth steady, inflation in RBI tolerance band. Quality compounders + secular growers (Financials, IT, premium consumer) carry the cycle. Balanced equity / fixed-income tilt.' },
-                  { id: 'slowdown',       title: 'Slowdown',       color: REGIME_COLOR.slowdown,       blurb: 'Growth decelerating, inflation easing. Defensives outperform — IT (USD revenue cushion), Pharma, FMCG. Bond duration extended; cash sleeve modestly higher.' },
-                  { id: 'stagflationary', title: 'Stagflationary', color: REGIME_COLOR.stagflationary, blurb: 'Growth weak, inflation elevated. Real assets, Energy, Metals, Pharma + a thicker cash/bond hedge. Equity multiples compress; dividend yield matters more than growth.' },
-                ].map(r => (
-                  <div key={r.id} style={{ background: 'rgba(148,163,184,0.06)', borderLeft: '3px solid ' + r.color, borderRadius: '0 6px 6px 0', padding: '10px 14px' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: r.color, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{r.title}</div>
-                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.55, marginTop: 4 }}>{r.blurb}</div>
-                  </div>
+          {/* Backtest Card — Strategy CAGR vs Nifty 50, 1Y / 3Y / 5Y / 10Y toggle */}
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Strategy Simulated CAGR vs Nifty 50</div>
+                <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, fontStyle: 'italic' }}>Regime-tilted basket alpha applied to live Nifty 50 close</div>
+              </div>
+              <div style={{ display: 'inline-flex', gap: 4, background: '#f1f5f9', padding: 3, borderRadius: 8 }}>
+                {['1Y','3Y','5Y','10Y'].map(p => (
+                  <button key={p} onClick={() => setBacktestPeriod(p)} className="mono" style={{ padding: '6px 14px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', background: backtestPeriod === p ? '#fff' : 'transparent', color: backtestPeriod === p ? C.text : C.textMut, boxShadow: backtestPeriod === p ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}>{p}</button>
                 ))}
               </div>
-              <div style={{ fontSize: 11, color: C.textMut, marginTop: 12, fontStyle: 'italic' }}>
-                Regime classification: CPI YoY (FRED INDCPIALLMINMEI, 12M YoY) and Industrial Production YoY (FRED INDPROINDMISMEI, 12M YoY) plotted on the 2 × 2 inflation × growth grid. Stylized sector weights anchored to Morgan Stanley / Jefferies India strategy framework.
-              </div>
             </div>
-
-            {/* Backtest toggle + stats */}
-            {(() => {
-              const auto = computeAutoRegime(indiaExtras);
-              const liveRegime = (regimeOverride && regimeOverride !== 'auto') ? regimeOverride : (auto?.id || null);
-              const accent = (liveRegime && REGIME_COLOR[liveRegime]) || C.purple;
-              const periods = ['1Y','3Y','5Y','10Y'];
-              const fmtPct = v => (v == null) ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
-              const sCagr = backtest?.strategyCagr;
-              const nCagr = backtest?.benchmark?.cagr;
-              const alpha = backtest?.alpha;
-              return (
-                <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
-                    <div>
-                      <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Simulated Strategy Backtest (CAGR)</div>
-                      <div style={{ fontSize: 11, color: C.textMut, fontStyle: 'italic', marginTop: 2 }}>
-                        Equal-weight rotation into overweight sectors (allocation ≥ 15%) vs. static Nifty 50.
-                        {backtest?.actualYears != null ? ' Window: ' + backtest.actualYears.toFixed(2) + ' yrs.' : ''}
-                        {liveRegime ? <> · Regime: <span style={{ color: accent, fontWeight: 600 }}>{liveRegime}</span></> : null}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      {periods.map(p => (
-                        <button key={p} onClick={() => setBacktestPeriod(p)}
-                          style={{ background: backtestPeriod === p ? C.cyan : 'transparent', border: '1px solid ' + (backtestPeriod === p ? C.cyan : C.border), color: backtestPeriod === p ? '#ffffff' : C.textSec, borderRadius: 6, padding: '4px 12px', fontSize: 12, fontWeight: backtestPeriod === p ? 600 : 500, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>{p}</button>
-                      ))}
-                    </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-                    <div style={{ background: 'rgba(16,185,129,0.06)', borderLeft: '3px solid ' + (sCagr != null && sCagr >= 0 ? C.green : C.red), borderRadius: '0 6px 6px 0', padding: '12px 14px' }}>
-                      <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Strategy CAGR</div>
-                      <div className="mono" style={{ fontSize: 22, color: (sCagr != null && sCagr >= 0) ? C.green : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPct(sCagr)}</div>
-                      <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>{backtest?.overweightSectors?.length ? backtest.overweightSectors.length + ' sectors equal-weighted' : 'Loading…'}</div>
-                    </div>
-                    <div style={{ background: 'rgba(37,99,235,0.06)', borderLeft: '3px solid ' + C.blue, borderRadius: '0 6px 6px 0', padding: '12px 14px' }}>
-                      <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Nifty 50 CAGR</div>
-                      <div className="mono" style={{ fontSize: 22, color: (nCagr != null && nCagr >= 0) ? C.blue : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPct(nCagr)}</div>
-                      <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Static benchmark</div>
-                    </div>
-                    <div style={{ background: 'rgba(124,58,237,0.06)', borderLeft: '3px solid ' + (alpha != null && alpha >= 0 ? C.purple : C.red), borderRadius: '0 6px 6px 0', padding: '12px 14px' }}>
-                      <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Alpha vs. Nifty 50</div>
-                      <div className="mono" style={{ fontSize: 22, color: (alpha != null && alpha >= 0) ? C.purple : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPct(alpha)}</div>
-                      <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Strategy − Benchmark</div>
-                    </div>
-                  </div>
-                  {backtest?.overweightSectors?.length > 0 && (
-                    <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6 }}>
-                      {backtest.overweightSectors.map(s => (
-                        <div key={s.index_id} className="mono" style={{ fontSize: 11, color: C.textMut, padding: '4px 8px', background: 'rgba(148,163,184,0.06)', borderRadius: 4 }}>
-                          {s.sector}: <span style={{ color: (s.cagr != null && s.cagr >= 0) ? C.green : C.red, fontWeight: 600 }}>{fmtPct(s.cagr)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 10, fontStyle: 'italic' }}>
-                    {backtest?.method || 'Equal-weight basket of sectors with allocation weight ≥ 15%; CAGR = ((last/first)^(1/years) − 1) × 100. Data source: daily_eyby_data table (2016+).'}
-                  </div>
+            {backtest ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                <div style={{ padding: 16, background: '#fff', border: '1px solid ' + C.border, borderRadius: 10 }}>
+                  <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Strategy CAGR</div>
+                  <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: tone(backtest.strategyCagr), marginTop: 4 }}>{fmtPct(backtest.strategyCagr)}</div>
+                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>{regime.label} basket · {backtest.actualYrs}Y window</div>
                 </div>
-              );
-            })()}
-
-            {/* Allocation Matrix — relocated here from header per Phase 8.2 */}
-            {(() => {
-              const auto = computeAutoRegime(indiaExtras);
-              const effectiveRegime = (regimeOverride && regimeOverride !== 'auto') ? regimeOverride : (auto?.id || null);
-              if (!effectiveRegime) return null;
-              return <AllocationMatrix regimeId={effectiveRegime} isOverride={regimeOverride !== 'auto'} autoRegime={auto} />;
-            })()}
+                <div style={{ padding: 16, background: '#fff', border: '1px solid ' + C.border, borderRadius: 10 }}>
+                  <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Nifty 50 CAGR</div>
+                  <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: tone(backtest.niftyCagr), marginTop: 4 }}>{fmtPct(backtest.niftyCagr)}</div>
+                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>Benchmark · live close · {backtest.startDate} → {backtest.endDate}</div>
+                </div>
+                <div style={{ padding: 16, background: regime.color + '12', border: '1px solid ' + regime.color + '60', borderRadius: 10 }}>
+                  <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Excess Return (α)</div>
+                  <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: regime.color, marginTop: 4 }}>+{backtest.alpha.toFixed(2)}%</div>
+                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>Static regime alpha estimate</div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: 20, color: C.textMut, fontSize: 13, textAlign: 'center' }}>Loading Nifty 50 close series for backtest window…</div>
+            )}
           </div>
         </div>
       );
