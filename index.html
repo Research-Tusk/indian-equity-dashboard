@@ -1148,22 +1148,30 @@
     //   GVA (Agri + Industry + Services) = GDP = Expenditure (C + I + G + Net Exports)
     // Backed by /functions/v1/nse-data-proxy?mode=india-macro (FRED + Yahoo proxies).
     // Phase 5.6B — Re-usable Mean / ±1σ / ±2σ line chart with institutional styling. Used by both Macro Hubs.
-    function MacroBandChart({ title, data, dataKey, color, suffix, source, note, valueFormatter, height }) {
+    function MacroBandChart({ title, data, dataKey, color, suffix, source, note, valueFormatter, height, yScaleSDMultiplier }) {
       const series = (data || []).filter(d => d && d[dataKey] != null && isFinite(d[dataKey]));
       if (series.length === 0) return null;
       const vals = series.map(d => d[dataKey]);
       const stats = vals.length > 5 ? calcStats(vals) : EMPTY_STATS;
       const latest = series[series.length-1][dataKey];
       const vf = valueFormatter || (v => (v >= 0 ? '+' : '') + (+v).toFixed(2) + suffix);
-      // Phase 7.3 — Standardized Y-axis: include all reference bands (±2σ) AND data extremes,
-      // then add a 5% margin so the dashed σ labels are never clipped. This matches the visual
-      // padding used by the Sector P/E and EYBY charts across the dashboard.
-      const candidates = vals.concat([stats.sd2Upper, stats.sd2Lower, stats.sd1Upper, stats.sd1Lower, stats.mean].filter(v => v != null && isFinite(v)));
-      const yMin = candidates.length ? Math.min(...candidates) : 0;
-      const yMax = candidates.length ? Math.max(...candidates) : 1;
-      const yRange = yMax - yMin || Math.max(1, Math.abs(yMax) * 0.1);
-      const yPad = yRange * 0.05;
-      const yDomain = [+(yMin - yPad).toFixed(4), +(yMax + yPad).toFixed(4)];
+      // Phase 7.3 / 8.3 — Y-axis sizing:
+      //   • Default: include all reference bands (±2σ) AND data extremes, with 5% margin.
+      //   • yScaleSDMultiplier (Phase 8.3 yield-spread chart): pin domain at mean ± N·σ.
+      let yDomain, yAllowOverflow;
+      if (yScaleSDMultiplier && stats.mean != null && stats.sd != null && isFinite(stats.sd) && stats.sd > 0) {
+        const half = yScaleSDMultiplier * stats.sd;
+        yDomain = [+(stats.mean - half).toFixed(4), +(stats.mean + half).toFixed(4)];
+        yAllowOverflow = true;
+      } else {
+        const candidates = vals.concat([stats.sd2Upper, stats.sd2Lower, stats.sd1Upper, stats.sd1Lower, stats.mean].filter(v => v != null && isFinite(v)));
+        const yMin = candidates.length ? Math.min(...candidates) : 0;
+        const yMax = candidates.length ? Math.max(...candidates) : 1;
+        const yRange = yMax - yMin || Math.max(1, Math.abs(yMax) * 0.1);
+        const yPad = yRange * 0.05;
+        yDomain = [+(yMin - yPad).toFixed(4), +(yMax + yPad).toFixed(4)];
+        yAllowOverflow = false;
+      }
       return (
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, marginBottom: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
@@ -1177,7 +1185,7 @@
             <ComposedChart data={series} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
               <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 11, fill: C.textMut }} interval={Math.max(1, Math.floor(series.length / 10))} stroke={C.grid} />
-              <YAxis domain={yDomain} allowDataOverflow={false} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + (suffix||'')} />
+              <YAxis domain={yDomain} allowDataOverflow={yAllowOverflow} tick={{ fontSize: 11, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v + (suffix||'')} />
               <Tooltip content={<Tip fields={[{ key: dataKey, label: title.split(' — ')[0], color, suffix: suffix||'' }]} />} />
               <ReferenceLine y={stats.sd2Upper} stroke={C.red}    strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+2σ (' + fmt2(stats.sd2Upper) + ')', position: 'insideTopRight',    fill: C.red,    fontSize: 10 }} />
               <ReferenceLine y={stats.sd1Upper} stroke={C.amber}  strokeWidth={1}   strokeDasharray="3 3" label={{ value: '+1σ (' + fmt2(stats.sd1Upper) + ')', position: 'insideTopRight',    fill: C.amber,  fontSize: 10 }} />
@@ -1488,9 +1496,19 @@
       const tone = v => v == null ? C.textMut : v >= 0 ? C.green : C.red;
       // Phase-5: hideRawIndex=true for CPI / Repo so the cell shows YoY % only — the raw FRED index value
       // is meaningless to a trader and was previously confused for the inflation rate itself.
-      const Cell = ({ label, sub, val, yoy, color, hideRawIndex }) => (
+      // Phase 8.3 — Source attribution: every cell renders a clickable [FRED] / [Yahoo] tag
+      // next to the indicator label that links to the upstream series page when a sourceUrl is supplied.
+      const sourceTagFromUrl = (u) => { if (!u) return 'SRC'; if (u.includes('fred.stlouisfed.org')) return 'FRED'; if (u.includes('finance.yahoo')) return 'Yahoo'; if (u.includes('niftyindices')) return 'NSE'; return 'SRC'; };
+      const Cell = ({ label, sub, val, yoy, color, hideRawIndex, sourceUrl, sourceTag }) => (
         <div style={{ padding: 16, borderRadius: 10, background: '#fff', border: '1px solid ' + C.border, minHeight: 96 }}>
-          <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{label}</div>
+          <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
+            {label}
+            {sourceUrl && (
+              <a href={sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#64748b', fontSize: 10, textDecoration: 'none', marginLeft: 6, fontWeight: 500 }}>
+                [{sourceTag || sourceTagFromUrl(sourceUrl)}]
+              </a>
+            )}
+          </div>
           <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: color || C.text, marginTop: 4 }}>{fmtPct(yoy)}</div>
           {!hideRawIndex && (
             <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Latest: <span className="mono">{fmtVal(val)}</span></div>
@@ -1515,9 +1533,9 @@
               GVA — Gross Value Added (Production Side)
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-              <Cell label="Agriculture" sub={gva.agri?.source} val={gva.agri?.latest} yoy={gva.agri?.yoy} color={tone(gva.agri?.yoy)} />
-              <Cell label="Industry (IIP YoY)" sub={gva.industry?.source} val={gva.industry?.latest} yoy={gva.industry?.yoy} color={tone(gva.industry?.yoy)} />
-              <Cell label="Services" sub={gva.services?.source} val={gva.services?.latest} yoy={gva.services?.yoy} color={tone(gva.services?.yoy)} />
+              <Cell label="Agriculture" sub={gva.agri?.source} sourceUrl={gva.agri?.sourceUrl} val={gva.agri?.latest} yoy={gva.agri?.yoy} color={tone(gva.agri?.yoy)} />
+              <Cell label="Industry (IIP YoY)" sub={gva.industry?.source} sourceUrl={gva.industry?.sourceUrl} val={gva.industry?.latest} yoy={gva.industry?.yoy} color={tone(gva.industry?.yoy)} />
+              <Cell label="Services" sub={gva.services?.source} sourceUrl={gva.services?.sourceUrl} val={gva.services?.latest} yoy={gva.services?.yoy} color={tone(gva.services?.yoy)} />
             </div>
           </div>
 
@@ -1527,10 +1545,10 @@
               GDP — Expenditure Method (Demand Side)
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-              <Cell label="C — Consumption" sub={exp.C?.source} val={exp.C?.latest} yoy={exp.C?.yoy} color={tone(exp.C?.yoy)} />
-              <Cell label="I — Investment" sub={exp.I?.source} val={exp.I?.latest} yoy={exp.I?.yoy} color={tone(exp.I?.yoy)} />
-              <Cell label="G — Govt Spending" sub={exp.G?.source} val={exp.G?.latest} yoy={exp.G?.yoy} color={tone(exp.G?.yoy)} />
-              <Cell label="X-M — Net Exports" sub={exp.NX?.source} val={exp.NX?.latest} yoy={exp.NX?.yoy} color={tone(exp.NX?.yoy)} />
+              <Cell label="C — Consumption" sub={exp.C?.source} sourceUrl={exp.C?.sourceUrl} val={exp.C?.latest} yoy={exp.C?.yoy} color={tone(exp.C?.yoy)} />
+              <Cell label="I — Investment" sub={exp.I?.source} sourceUrl={exp.I?.sourceUrl} val={exp.I?.latest} yoy={exp.I?.yoy} color={tone(exp.I?.yoy)} />
+              <Cell label="G — Govt Spending" sub={exp.G?.source} sourceUrl={exp.G?.sourceUrl} val={exp.G?.latest} yoy={exp.G?.yoy} color={tone(exp.G?.yoy)} />
+              <Cell label="X-M — Net Exports" sub={exp.NX?.source} sourceUrl={exp.NX?.sourceUrl} val={exp.NX?.latest} yoy={exp.NX?.yoy} color={tone(exp.NX?.yoy)} />
             </div>
             <div style={{ fontSize: 11, color: C.textMut, marginTop: 12, fontStyle: 'italic' }}>
               G and Net Exports show graceful fallbacks until FRED publishes high-frequency proxies for these series.
@@ -1543,10 +1561,63 @@
               Monetary Backdrop
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-              <Cell label="CPI Inflation (YoY)"          sub={mon.cpi?.source}  val={mon.cpi?.latest}  yoy={mon.cpi?.yoy}  color={tone(-(mon.cpi?.yoy  ?? 0))} hideRawIndex />
-              <Cell label="Short-Term Rate Δ (RBI proxy)" sub={mon.repo?.source} val={mon.repo?.latest} yoy={mon.repo?.yoy} color={tone(-(mon.repo?.yoy ?? 0))} hideRawIndex />
+              <Cell label="CPI Inflation (YoY)"          sub={mon.cpi?.source}  sourceUrl={mon.cpi?.sourceUrl}  val={mon.cpi?.latest}  yoy={mon.cpi?.yoy}  color={tone(-(mon.cpi?.yoy  ?? 0))} hideRawIndex />
+              <Cell label="Short-Term Rate Δ (RBI proxy)" sub={mon.repo?.source} sourceUrl={mon.repo?.sourceUrl} val={mon.repo?.latest} yoy={mon.repo?.yoy} color={tone(-(mon.repo?.yoy ?? 0))} hideRawIndex />
             </div>
           </div>
+
+          {/* Phase 8.3 — Block 4: Banking & Liquidity. RBI DBIE proxies via FRED; graceful '—' when source rate-limits. */}
+          {indiaMacro.bankingLiquidity && (
+            <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+                Banking &amp; Liquidity
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                <Cell label="Bank Credit Growth (YoY)" sub={indiaMacro.bankingLiquidity.creditGrowth?.source}  sourceUrl={indiaMacro.bankingLiquidity.creditGrowth?.sourceUrl}  val={indiaMacro.bankingLiquidity.creditGrowth?.latest}  yoy={indiaMacro.bankingLiquidity.creditGrowth?.yoy}  color={tone(indiaMacro.bankingLiquidity.creditGrowth?.yoy)} />
+                <Cell label="Aggregate Deposit Growth (YoY)" sub={indiaMacro.bankingLiquidity.depositGrowth?.source} sourceUrl={indiaMacro.bankingLiquidity.depositGrowth?.sourceUrl} val={indiaMacro.bankingLiquidity.depositGrowth?.latest} yoy={indiaMacro.bankingLiquidity.depositGrowth?.yoy} color={tone(indiaMacro.bankingLiquidity.depositGrowth?.yoy)} />
+              </div>
+            </div>
+          )}
+
+          {/* Phase 8.3 — Block 5: External Sector (Trade Balance + FX Reserves). */}
+          {indiaMacro.externalSector && (
+            <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+                External Sector
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                <Cell label="Merchandise Trade Balance" sub={indiaMacro.externalSector.tradeBalance?.source} sourceUrl={indiaMacro.externalSector.tradeBalance?.sourceUrl} val={indiaMacro.externalSector.tradeBalance?.latest} yoy={indiaMacro.externalSector.tradeBalance?.yoy} color={tone(indiaMacro.externalSector.tradeBalance?.yoy)} />
+                <Cell label="FX Reserves ex Gold" sub={indiaMacro.externalSector.fxReserves?.source} sourceUrl={indiaMacro.externalSector.fxReserves?.sourceUrl} val={indiaMacro.externalSector.fxReserves?.latest} yoy={indiaMacro.externalSector.fxReserves?.yoy} color={tone(indiaMacro.externalSector.fxReserves?.yoy)} />
+              </div>
+            </div>
+          )}
+
+          {/* Phase 8.3 — Block 6: High-Frequency Industrial Pulse (IIP YoY). */}
+          {indiaMacro.industrialPulse && (
+            <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+                High-Frequency Industrial Pulse
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                <Cell label="Index of Industrial Production (YoY)" sub={indiaMacro.industrialPulse.iip?.source} sourceUrl={indiaMacro.industrialPulse.iip?.sourceUrl} val={indiaMacro.industrialPulse.iip?.latest} yoy={indiaMacro.industrialPulse.iip?.yoy} color={tone(indiaMacro.industrialPulse.iip?.yoy)} />
+              </div>
+            </div>
+          )}
+
+          {/* Phase 8.3 — Yield Spread (10Y G-Sec − 3M T-Bill). Y-axis pinned at mean ± 2.5σ for stability across cycles. */}
+          {indiaMacro.yieldCurve?.spread?.series && indiaMacro.yieldCurve.spread.series.length > 0 && (
+            <MacroBandChart
+              title="Yield Spread — 10Y G-Sec − 3M T-Bill"
+              data={sliceFilter(indiaMacro.yieldCurve.spread.series)}
+              dataKey="value"
+              color={C.purple}
+              suffix="%"
+              source={indiaMacro.yieldCurve.spread.source}
+              note="Slope of the rupee yield curve (10Y − 3M T-Bill). Steepening = market pricing rate cuts / reflation; flattening or inversion = expectations of policy tightening or growth slowdown. Y-axis pinned at mean ± 2.5σ."
+              height={280}
+              yScaleSDMultiplier={2.5}
+            />
+          )}
 
           {/* Phase 5.6B — Block 4: GDP Component Heatmap (PFCE / GFCF / GFCE quarterly YoY). */}
           {indiaExtras?.gdpComponents && (() => {
