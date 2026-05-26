@@ -1718,6 +1718,149 @@
             </div>
           )}
 
+          {/* Phase 8.3 — Capex Cycle Health + Capital Markets Pulse. Auto-updates from india-extras.
+              Andrade/Sanjoy Bhattacharya framework: ROE − Cost of Capital + Capacity Utilisation jointly
+              gate corporate capex appetite. Adds INR stress, Mid-Large PE premium, top-10 concentration,
+              SIP / AUM YoY growth, and the Brent → CPI passthrough correlation. */}
+          {(indiaExtras?.andrade || indiaExtras?.inr?.series || indiaExtras?.midcapPremium?.series) && (
+            <div style={{ marginTop: 28, paddingTop: 24, borderTop: '2px solid ' + C.border, marginBottom: 24 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Capex Cycle &amp; Capital-Markets Pulse</h3>
+              <p style={{ fontSize: 12, color: C.textMut, margin: '0 0 18px', maxWidth: 900, lineHeight: 1.55 }}>
+                Andrade / Sanjoy Bhattacharya framework: a capex cycle ignites only when the spread between aggregate ROE and the cost of capital (10Y G-Sec) is wide AND capacity utilisation is tight. Complemented with INR stress, mid/large-cap PE premium, top-10 concentration, behavioural flows (SIP / AUM YoY), and the Brent → CPI passthrough.
+              </p>
+
+              {/* Block A: Andrade Capex Cycle Health tiles */}
+              {(() => {
+                const a = indiaExtras?.andrade || {};
+                const roe = a.roe;
+                const spread = a.roeSpread;
+                const cap  = a.capUtil;
+                // Threshold colors per Andrade thesis
+                const spreadColor = (spread == null) ? C.textMut : spread < 3 ? C.red : spread < 6 ? C.amber : C.green;
+                const capColor    = (cap == null)    ? C.textMut : cap < 75 ? C.red : cap < 80 ? C.amber : C.green;
+                const roeColor    = (roe == null)    ? C.textMut : roe < 12 ? C.red : roe < 15 ? C.amber : C.green;
+                const verdict = (spread != null && cap != null) ? (spread < 3 && cap < 75 ? 'No capex incentive — leverage cycle muted' : (spread > 6 && cap > 80 ? 'Capex cycle on — operating leverage favours cyclicals' : 'Mid-cycle — partial capex signal')) : 'Insufficient data';
+                const verdictColor = (spread != null && cap != null) ? (spread < 3 && cap < 75 ? C.red : (spread > 6 && cap > 80 ? C.green : C.amber)) : C.textMut;
+                return (
+                  <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Capex Cycle Health</div>
+                        <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, fontStyle: 'italic' }}>Andrade framework · live signal</div>
+                      </div>
+                      <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: verdictColor, padding: '4px 10px', background: verdictColor + '18', borderRadius: 6, border: '1px solid ' + verdictColor + '60' }}>{verdict}</span>
+                    </div>
+                    <div className="kpi-grid">
+                      <StatCard label="Nifty 50 ROE" value={roe != null ? roe.toFixed(2) : '—'} suffix="%" color={roeColor} subtext="Derived: (P/B ÷ P/E) × 100" />
+                      <StatCard label="ROE − 10Y G-Sec" value={spread != null ? (spread >= 0 ? '+' : '') + spread.toFixed(2) : '—'} suffix="%" color={spreadColor} subtext={spread != null ? (spread < 3 ? 'Narrow · capex stalls' : spread < 6 ? 'Mid · partial signal' : 'Wide · capex incentive on') : 'Spread vs cost of capital'} />
+                      <StatCard label="Capacity Utilisation" value={cap != null ? cap.toFixed(1) : '—'} suffix="%" color={capColor} subtext={cap != null ? (cap < 75 ? 'Slack · no new capex' : cap < 80 ? 'Tightening' : 'Tight · capex cycle ahead') : 'RBI OBICUS · live'} />
+                      <StatCard label="Net Debt / Equity" value="N/A" suffix="" color={C.textMut} subtext="No free aggregate source" />
+                    </div>
+                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 12, fontStyle: 'italic' }}>{a.source || 'Andrade / Sanjoy Bhattacharya framework'}</div>
+                  </div>
+                );
+              })()}
+
+              {/* Block B: Macro regime stress — INR and Yield Curve */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 4 }}>
+                {indiaExtras?.inr?.series && (
+                  <MacroBandChart
+                    title="USD / INR Spot"
+                    data={sliceFilter(indiaExtras.inr.series)} dataKey="value" color={C.red} suffix=""
+                    valueFormatter={v => '₹' + (+v).toFixed(2)}
+                    source={indiaExtras?.sources?.inr || 'Yahoo INR=X (USD/INR daily)'}
+                    note="INR depreciation = imported-inflation pressure + FII outflow trigger. Ambit May'26 framing: 11.5% YoY fall fits the 2013 taper-tantrum analogue."
+                    height={240}
+                  />
+                )}
+                {indiaExtras?.niftyRoeSpread?.series && (
+                  <MacroBandChart
+                    title="ROE − 10Y G-Sec Spread (Nifty 50)"
+                    data={sliceFilter(indiaExtras.niftyRoeSpread.series)} dataKey="value" color={C.green} suffix="%"
+                    source={indiaExtras?.sources?.niftyRoeSpread || 'Derived from daily_eyby_data: (P/B÷P/E)×100 − 10Y G-Sec'}
+                    note="The capex-incentive gauge. Below +3% historically coincides with leverage cycles stalling; above +6% with new-capex announcements accelerating."
+                    height={240}
+                  />
+                )}
+              </div>
+
+              {/* Block C: Valuation regime — Mid/Large premium + Concentration */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 4 }}>
+                {indiaExtras?.midcapPremium?.series && (
+                  <MacroBandChart
+                    title="Midcap 150 / Nifty 50 — P/E Premium"
+                    data={sliceFilter(indiaExtras.midcapPremium.series)} dataKey="value" color={C.purple} suffix="x"
+                    valueFormatter={v => (+v).toFixed(2) + 'x'}
+                    source={indiaExtras?.sources?.midcapPremium || 'Nifty Midcap 150 P/E ÷ Nifty 50 P/E (DB-derived)'}
+                    note="Mid-cap froth gauge. Sustained moves above +1σ historically precede small/mid-cap corrections (Ambit Earnings-Momentum Feb'26 concentration cycle)."
+                    height={240}
+                  />
+                )}
+                {indiaExtras?.concentration?.top10Pct != null && (() => {
+                  const c = indiaExtras.concentration;
+                  const top = c.top10 || [];
+                  return (
+                    <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 22, marginBottom: 20 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                        <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, margin: 0 }}>Nifty 50 — Top-10 Concentration</h3>
+                        <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: C.cyan }}>{c.top10Pct.toFixed(2)}%</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.textMut, marginBottom: 12, fontStyle: 'italic' }}>Live ffmc-derived from NSE · as of {c.asOf || 'today'}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+                        {top.map((t, i) => (
+                          <div key={t.ticker || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '6px 10px', background: 'rgba(148,163,184,0.06)', borderLeft: '2px solid ' + C.cyan, borderRadius: '0 4px 4px 0', fontSize: 11 }}>
+                            <span style={{ color: C.text, fontWeight: 600 }}>{(t.name || t.ticker || '').slice(0, 22)}</span>
+                            <span className="mono" style={{ color: C.cyan, fontWeight: 700 }}>{(t.weight || 0).toFixed(2)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.textMut, marginTop: 12, padding: '8px 12px', background: 'rgba(124,58,237,0.08)', borderLeft: '3px solid ' + C.purple, borderRadius: '0 6px 6px 0', lineHeight: 1.5 }}>
+                        Ambit Earnings-Momentum (Feb'26): the rising-concentration cycle is currently at mid-point. Sustained &gt;60% historically caps broad-market alpha and favours large-cap quality compounders.
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Block D: Behavioural flows — SIP / AUM YoY */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 4 }}>
+                {indiaExtras?.sipYoY?.series && (
+                  <MacroBandChart
+                    title="SIP Inflows — 12M YoY Growth"
+                    data={sliceFilter(indiaExtras.sipYoY.series)} dataKey="value" color={C.cyan} suffix="%"
+                    source={indiaExtras?.sources?.sipYoY || 'AMFI monthly SIP contribution (Rs Cr)'}
+                    note="DSP NETRA framing: the behavioural-bias hedge. YoY acceleration through +1σ flags the structural retail-flow tailwind that has absorbed FII selling since 2021."
+                    height={240}
+                  />
+                )}
+                {indiaExtras?.aumYoY?.series && (
+                  <MacroBandChart
+                    title="Equity Mutual Fund AUM — 12M YoY Growth"
+                    data={sliceFilter(indiaExtras.aumYoY.series)} dataKey="value" color={C.blue} suffix="%"
+                    source={indiaExtras?.sources?.aumYoY || 'AMFI monthly Average AUM, Equity-oriented (Rs Cr)'}
+                    note="Tracks domestic equity savings stock. Compare against MoM SIP flow — AUM falling but SIP rising = MTM-driven re-rating risk; both rising in tandem = healthy expansion."
+                    height={240}
+                  />
+                )}
+              </div>
+
+              {/* Block E: Imported-inflation passthrough */}
+              {indiaExtras?.brent?.series && indiaExtras?.cpi?.series && (
+                <CorrelationChart
+                  title="Brent Crude ↔ India CPI (12M YoY)"
+                  seriesA={sliceFilter(indiaExtras.brent.series)}
+                  seriesB={sliceFilter(indiaExtras.cpi.series)}
+                  labelA="Brent (USD/bbl)"
+                  labelB="CPI YoY"
+                  colorA={C.amber}
+                  colorB={C.red}
+                  source="Yahoo BZ=F (Brent daily) × FRED INDCPIALLMINMEI (CPI YoY monthly)"
+                  note="India imports >85% of its crude; oil passthrough lags CPI by ~3-6 months historically. Sustained R² &gt; 0.4 means the inflation regime is oil-driven and RBI's hands are tied on rate cuts."
+                />
+              )}
+            </div>
+          )}
+
           {/* Phase 5.7 — Sector composition donut (count-based weight from niftyindices.com constituent CSV) */}
           {sectorWeights?.sectors && sectorWeights.sectors.length > 0 && (() => {
             const palette = [C.blue, C.purple, C.green, C.amber, C.red, C.cyan, '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#f97316', '#84cc16', '#06b6d4'];
@@ -1850,6 +1993,7 @@
             <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>Allocation Methodology &amp; Backtest</h2>
             <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 24px' }}>The active regime is auto-detected from live CPI + IIP YoY, or manually overridden via the Global Control Bar above. Sector tilts and the simulated backtest update in real time.</p>
 
+            {/* Explainer card */}
             <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 22, marginBottom: 20 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: C.text, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Allocation Methodology: Macro-Driven Dynamic Factor Rotation</div>
               <p style={{ fontSize: 13, color: C.textSec, lineHeight: 1.65, margin: '0 0 14px' }}>
@@ -1873,12 +2017,13 @@
               </div>
             </div>
 
+            {/* Backtest toggle + stats */}
             {(() => {
               const auto = computeAutoRegime(indiaExtras);
               const liveRegime = (regimeOverride && regimeOverride !== 'auto') ? regimeOverride : (auto?.id || null);
               const accent = (liveRegime && REGIME_COLOR[liveRegime]) || C.purple;
               const periods = ['1Y','3Y','5Y','10Y'];
-              const fmtPctLocal = v => (v == null) ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+              const fmtPct = v => (v == null) ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
               const sCagr = backtest?.strategyCagr;
               const nCagr = backtest?.benchmark?.cagr;
               const alpha = backtest?.alpha;
@@ -1903,17 +2048,17 @@
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                     <div style={{ background: 'rgba(16,185,129,0.06)', borderLeft: '3px solid ' + (sCagr != null && sCagr >= 0 ? C.green : C.red), borderRadius: '0 6px 6px 0', padding: '12px 14px' }}>
                       <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Strategy CAGR</div>
-                      <div className="mono" style={{ fontSize: 22, color: (sCagr != null && sCagr >= 0) ? C.green : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPctLocal(sCagr)}</div>
+                      <div className="mono" style={{ fontSize: 22, color: (sCagr != null && sCagr >= 0) ? C.green : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPct(sCagr)}</div>
                       <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>{backtest?.overweightSectors?.length ? backtest.overweightSectors.length + ' sectors equal-weighted' : 'Loading…'}</div>
                     </div>
                     <div style={{ background: 'rgba(37,99,235,0.06)', borderLeft: '3px solid ' + C.blue, borderRadius: '0 6px 6px 0', padding: '12px 14px' }}>
                       <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Nifty 50 CAGR</div>
-                      <div className="mono" style={{ fontSize: 22, color: (nCagr != null && nCagr >= 0) ? C.blue : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPctLocal(nCagr)}</div>
+                      <div className="mono" style={{ fontSize: 22, color: (nCagr != null && nCagr >= 0) ? C.blue : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPct(nCagr)}</div>
                       <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Static benchmark</div>
                     </div>
                     <div style={{ background: 'rgba(124,58,237,0.06)', borderLeft: '3px solid ' + (alpha != null && alpha >= 0 ? C.purple : C.red), borderRadius: '0 6px 6px 0', padding: '12px 14px' }}>
                       <div style={{ fontSize: 11, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Alpha vs. Nifty 50</div>
-                      <div className="mono" style={{ fontSize: 22, color: (alpha != null && alpha >= 0) ? C.purple : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPctLocal(alpha)}</div>
+                      <div className="mono" style={{ fontSize: 22, color: (alpha != null && alpha >= 0) ? C.purple : C.red, fontWeight: 700, marginTop: 4 }}>{backtestLoading ? '…' : fmtPct(alpha)}</div>
                       <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Strategy − Benchmark</div>
                     </div>
                   </div>
@@ -1921,7 +2066,7 @@
                     <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6 }}>
                       {backtest.overweightSectors.map(s => (
                         <div key={s.index_id} className="mono" style={{ fontSize: 11, color: C.textMut, padding: '4px 8px', background: 'rgba(148,163,184,0.06)', borderRadius: 4 }}>
-                          {s.sector}: <span style={{ color: (s.cagr != null && s.cagr >= 0) ? C.green : C.red, fontWeight: 600 }}>{fmtPctLocal(s.cagr)}</span>
+                          {s.sector}: <span style={{ color: (s.cagr != null && s.cagr >= 0) ? C.green : C.red, fontWeight: 600 }}>{fmtPct(s.cagr)}</span>
                         </div>
                       ))}
                     </div>
@@ -1933,6 +2078,7 @@
               );
             })()}
 
+            {/* Allocation Matrix — relocated here from header per Phase 8.2 */}
             {(() => {
               const auto = computeAutoRegime(indiaExtras);
               const effectiveRegime = (regimeOverride && regimeOverride !== 'auto') ? regimeOverride : (auto?.id || null);
@@ -2491,13 +2637,16 @@
     };
     const REGIME_COLOR = { expansion: '#10b981', moderation: '#2563eb', slowdown: '#d97706', stagflationary: '#dc2626' };
 
+    // Phase 8.1 — Auto regime classifier. Reads the india-extras feed for live CPI YoY (headline
+    // inflation) and Industry IIP YoY (high-frequency growth proxy), then applies the canonical
+    // 2x2 inflation-vs-growth grid. Returns null if either signal is missing.
     function computeAutoRegime(indiaExtras) {
       const cpiSeries = indiaExtras?.cpi?.series || [];
       const indSeries = indiaExtras?.gva?.industry?.series || [];
       const cpiLatest = cpiSeries.length ? cpiSeries[cpiSeries.length - 1].value : null;
       const indLatest = indSeries.length ? indSeries[indSeries.length - 1].value : null;
       if (cpiLatest == null || indLatest == null) return null;
-      const highInflation   = cpiLatest >= 5;
+      const highInflation   = cpiLatest >= 5;   // RBI upper tolerance
       const strongGrowth    = indLatest >= 6;
       const moderateGrowth  = indLatest >= 3;
       if (highInflation && !moderateGrowth) return { id: 'stagflationary', cpi: cpiLatest, growth: indLatest };
@@ -2506,6 +2655,9 @@
       return { id: 'slowdown', cpi: cpiLatest, growth: indLatest };
     }
 
+    // Phase 8.1 — Allocation Strategy Matrix. Renders the active regime's sector weights as a
+    // horizontal bar grid, with the regime color anchoring the heatmap. Re-renders the moment
+    // `effectiveRegime` flips (either via the Auto engine or a manual override from ControlPanel).
     function AllocationMatrix({ regimeId, isOverride, autoRegime }) {
       if (!regimeId || !ALLOCATION_MATRIX[regimeId]) return null;
       const weights = ALLOCATION_MATRIX[regimeId];
@@ -2550,6 +2702,7 @@
       const [countdown, setCountdown] = useState(300);
       const [period, setPeriod] = useState('All');
       const [customStart, setCustomStart] = useState('');
+      // Phase 8.1 — Regime override. 'auto' = use computeAutoRegime(indiaExtras); otherwise force.
       const [regimeOverride, setRegimeOverride] = useState('auto');
       // Phase 5.4 — native Refresh Data button state: 'idle' | 'refreshing' | 'done' | 'error'
       const [refreshState, setRefreshState] = useState('idle');
@@ -2973,6 +3126,8 @@
               <p style={{ fontSize: 14, color: C.textMut, marginTop: 6 }}>{indexConfig.label} Valuation Metrics &bull; Data till: {lastUpdated ? new Date(lastUpdated).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'}) : '...'}</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              {/* Phase 8.1 — Global Control Panel. Wraps the time-period segmented control + regime
+                  selector. Amber border lights up when a manual regime override is active. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', border: '1.5px solid ' + (regimeOverride !== 'auto' ? C.amber : C.border), borderRadius: 8, background: regimeOverride !== 'auto' ? 'rgba(217,119,6,0.04)' : 'transparent', transition: 'border-color 0.18s ease, background 0.18s ease' }}>
                 <span style={{ fontSize: 10, color: regimeOverride !== 'auto' ? C.amber : C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>{regimeOverride !== 'auto' ? 'Override' : 'Time'}</span>
                 <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -3062,7 +3217,8 @@
             </div>
           </div>
 
-          {/* Phase 8.2 — Allocation Matrix relocated to bottom of India Macro Hub. */}
+          {/* Phase 8.2 — Allocation Strategy Matrix relocated to bottom of India Macro Hub.
+              Regime override state (regimeOverride) still lives here and is passed through to the hub. */}
 
           {/* Tier 1: Country Toggle */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
