@@ -1483,49 +1483,52 @@
         if (!indiaMacro) return;
         if (indiaMacro?.niftyClose && indiaMacro.niftyClose.length > 0) return;
         if (niftyFallback) return;
-        // Phase 9 fallback chain. Layer 1: Supabase /get-data (DB-backed, most reliable).
-        // Layer 2: Yahoo Finance v8 via corsproxy.io if DB layer is empty / blocked.
-        const tryYahooProxy = () => {
-          const p2 = Math.floor(Date.now() / 1000);
-          const p1 = p2 - 86400 * 365 * 11;
-          const yurl = 'https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?period1=' + p1 + '&period2=' + p2 + '&interval=1d';
-          const proxied = 'https://corsproxy.io/?url=' + encodeURIComponent(yurl);
-          return fetch(proxied).then(r => r.json()).then(j => {
-            const r0 = j?.chart?.result?.[0]; if (!r0) return;
-            const ts = r0.timestamp || []; const cl = r0.indicators?.quote?.[0]?.close || [];
-            const series = ts.map((t, i) => ({ date: new Date(t * 1000).toISOString().split('T')[0], value: cl[i] })).filter(p => p.value != null && p.value > 0);
-            if (series.length > 0) setNiftyFallback(series);
-          }).catch(() => {});
-        };
         fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=get-data&index=nifty50')
           .then(r => r.json())
           .then(rows => {
-            if (Array.isArray(rows) && rows.length > 0) {
-              const series = rows.map(r => ({ date: r[0], value: r[4] })).filter(p => p.value != null && p.value > 0);
-              if (series.length > 0) { setNiftyFallback(series); return; }
-            }
-            return tryYahooProxy();
+            if (!Array.isArray(rows)) return;
+            const series = rows.map(r => ({ date: r[0], value: r[4] })).filter(p => p.value != null && p.value > 0);
+            setNiftyFallback(series);
           })
-          .catch(() => { tryYahooProxy(); });
+          .catch(() => {});
       }, [indiaMacro, niftyFallback]);
 
       const regime = useMemo(() => {
         const iipYoy = indiaMacro?.industrial?.iip?.yoy;
         const cpiYoy = indiaMacro?.inflation?.cpi?.yoy;
         const spread = indiaMacro?.inflation?.yieldSpread?.value;
+        // Phase 9.1 — Pull business-cycle metrics for capex/deleveraging detection.
+        const bc = indiaMacro?.businessCycle || {};
+        const capUtilVal     = bc.capUtil?.status === 'ok' ? bc.capUtil?.value : null;          // <75% = slack, capex won't accelerate
+        const roeSpreadVal   = bc.roeGsecSpread?.status === 'ok' ? bc.roeGsecSpread?.value : null; // tight (<3%) = bank ROEs compressed
+        // Rate-of-Change momentum proxy — Nifty Auto YoY (sector demand).
+        const autoYoY        = indiaMacro?.highFreq?.autoIndexYoY?.yoy ?? null;
+        const consumptionAccel = autoYoY != null && autoYoY >= 10; // accelerating consumption
+        const consumptionWeak  = autoYoY != null && autoYoY <= 0;  // contracting
+
         if (iipYoy == null || cpiYoy == null || spread == null) {
-          return { id: 'unknown', label: 'Insufficient Data', color: C.textMut, tone: 'Awaiting fresh macro prints from FRED.', signal: '—' };
+          return { id: 'unknown', label: 'Insufficient Data', color: C.textMut, tone: 'Awaiting fresh macro prints from FRED.', signal: '—', tilt: null };
         }
         const growthHot = iipYoy >= 4;
         const inflationHot = cpiYoy >= 5;
         const curveSteep = spread >= 1.0;
+
+        // Phase 9.1 — Capex/Deleveraging override: triggers Banks underweight regardless of headline growth.
+        // Fires when Capacity Utilisation is materially below trend (<75%) AND ROE-GSec spread is tight (<3%),
+        // i.e. corporates won't borrow to add capacity and banks lack the rate edge to expand credit profitably.
+        const capexBlocked = (capUtilVal != null && capUtilVal < 75) && (roeSpreadVal != null && roeSpreadVal < 3);
+        if (capexBlocked) {
+          return { id: 'low_capex', label: 'Low Capex / Deleveraging', color: C.amber, tone: 'Capacity slack with thin ROE-over-G-Sec edge — corporates park, banks compress. Underweight banks & capital goods; rotate into FMCG, Pharma, IT.', signal: `CapUtil ${capUtilVal}% · ROE−GSec ${roeSpreadVal}%`, tilt: consumptionAccel ? 'consumption_accel' : (consumptionWeak ? 'consumption_weak' : null) };
+        }
+
+        const tilt = consumptionAccel ? 'consumption_accel' : (consumptionWeak ? 'consumption_weak' : null);
         if (growthHot && !inflationHot && curveSteep)
-          return { id: 'expansion', label: 'Expansion', color: C.green, tone: 'Growth accelerating with inflation contained and a steep curve. Cyclicals, financials, and capex plays favoured.', signal: 'IIP↑ · CPI controlled · Steep curve' };
+          return { id: 'expansion', label: 'Expansion', color: C.green, tone: 'Growth accelerating with inflation contained and a steep curve. Cyclicals, financials, and capex plays favoured.', signal: 'IIP↑ · CPI controlled · Steep curve', tilt };
         if (growthHot && inflationHot)
-          return { id: 'stagflation', label: 'Stagflation', color: C.red, tone: 'Growth holding up but inflation sticky. Pricing-power and commodity plays outperform; rate-sensitive names lag.', signal: 'IIP↑ · CPI↑ · Curve flat / inverted' };
+          return { id: 'stagflation', label: 'Stagflation', color: C.red, tone: 'Growth holding up but inflation sticky. Pricing-power and commodity plays outperform; rate-sensitive names lag.', signal: 'IIP↑ · CPI↑ · Curve flat / inverted', tilt };
         if (!growthHot && inflationHot)
-          return { id: 'moderation', label: 'Moderation', color: C.amber, tone: 'Growth cooling while inflation remains warm. Quality + defensive tilt; underweight high-beta cyclicals.', signal: 'IIP→ · CPI↑ · Curve flattening' };
-        return { id: 'slowdown', label: 'Slowdown', color: C.cyan, tone: 'Both growth and inflation decelerating; curve flat or inverted. Classic defensive playbook leads.', signal: 'IIP↓ · CPI↓ · Curve inverted' };
+          return { id: 'moderation', label: 'Moderation', color: C.amber, tone: 'Growth cooling while inflation remains warm. Quality + defensive tilt; underweight high-beta cyclicals.', signal: 'IIP→ · CPI↑ · Curve flattening', tilt };
+        return { id: 'slowdown', label: 'Slowdown', color: C.cyan, tone: 'Both growth and inflation decelerating; curve flat or inverted. Classic defensive playbook leads.', signal: 'IIP↓ · CPI↓ · Curve inverted', tilt };
       }, [indiaMacro]);
 
       const STRATEGY_MATRIX = [
@@ -1533,6 +1536,8 @@
         { regime: 'moderation', label: 'Moderation', overweight: 'IT · Pharma · Healthcare · Insurance',          underweight: 'Metals · Realty · Smallcaps',          alpha: 1.5 },
         { regime: 'slowdown',  label: 'Slowdown',   overweight: 'FMCG · Pharma · Large-cap IT · Utilities',       underweight: 'Auto · Metals · Realty · NBFCs',       alpha: 3.5 },
         { regime: 'stagflation', label: 'Stagflation', overweight: 'Energy · Commodities · USD-hedged IT · Gold',  underweight: 'Auto · Banks · Discretionary',         alpha: 2.0 },
+        // Phase 9.1 — Capex/Deleveraging regime row
+        { regime: 'low_capex', label: 'Low Capex / Deleveraging', overweight: 'FMCG · Pharma · IT · Utilities',  underweight: 'Banks · NBFCs · Capital Goods · Auto', alpha: 1.0 },
       ];
 
       const backtest = useMemo(() => {
@@ -1628,6 +1633,8 @@
               <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}>{regime.tone}</div>
               <div className="mono" style={{ fontSize: 11, color: C.textMut, marginTop: 6 }}>
                 Signal: {regime.signal} · IIP YoY {fmtPct(ind.iip?.yoy)} · CPI YoY {fmtPct(inf.cpi?.yoy)} · 10Y−3M {inf.yieldSpread?.value != null ? inf.yieldSpread.value.toFixed(2) + '%' : 'N/A'}
+                {regime.tilt === 'consumption_accel' && <span style={{ marginLeft: 10, padding: '2px 8px', borderRadius: 4, background: C.green + '20', color: C.green, fontSize: 10, fontWeight: 700, letterSpacing: '0.05em' }}>▲ CONSUMPTION ACCELERATING</span>}
+                {regime.tilt === 'consumption_weak'  && <span style={{ marginLeft: 10, padding: '2px 8px', borderRadius: 4, background: C.red   + '20', color: C.red,   fontSize: 10, fontWeight: 700, letterSpacing: '0.05em' }}>▼ CONSUMPTION CONTRACTING</span>}
               </div>
             </div>
           </div>
@@ -1665,6 +1672,34 @@
             <Cell cell={ext.fxReserves} />
             <Cell cell={ext.fiiFlows} />
             <Cell cell={ext.brent} suffix=" USD" />
+          </Box>
+
+          {/* Phase 9.1 — Business Cycle & Leverage */}
+          <Box title="6 · Business Cycle & Leverage" columns={2}>
+            <Cell cell={(indiaMacro.businessCycle||{}).capUtil} suffix="%" />
+            <Cell cell={(indiaMacro.businessCycle||{}).netDebtEquity} />
+            <Cell cell={(indiaMacro.businessCycle||{}).systemRoe} suffix="%" />
+            <Cell cell={(indiaMacro.businessCycle||{}).roeGsecSpread} suffix="%" />
+          </Box>
+
+          {/* Phase 9.1 — High-Frequency Consumption & Logistics */}
+          <Box title="7 · High-Frequency Consumption & Logistics" columns={3}>
+            <Cell cell={(indiaMacro.highFreq||{}).autoSalesPV} />
+            <Cell cell={(indiaMacro.highFreq||{}).autoSales2W} />
+            <Cell cell={(indiaMacro.highFreq||{}).autoSalesCV} />
+            <Cell cell={(indiaMacro.highFreq||{}).autoSalesTractors} />
+            <Cell cell={(indiaMacro.highFreq||{}).autoIndexYoY} />
+            <Cell cell={(indiaMacro.highFreq||{}).fuelConsumption} />
+            <Cell cell={(indiaMacro.freight||{}).portCargo} />
+            <Cell cell={(indiaMacro.freight||{}).railwayFreight} />
+            <Cell cell={(indiaMacro.freight||{}).ewayBills} />
+          </Box>
+
+          {/* Phase 9.1 — Institutional Flows */}
+          <Box title="8 · Institutional Flows (FII vs DII/MF)" columns={3}>
+            <Cell cell={(indiaMacro.capitalFlows||{}).fiiEquity} />
+            <Cell cell={(indiaMacro.capitalFlows||{}).fiiDebt} />
+            <Cell cell={(indiaMacro.capitalFlows||{}).diiInflows} />
           </Box>
 
           {/* Yield Spread chart — Y-axis pinned at mean ± 2.5σ per Phase 9 standardization rule */}
