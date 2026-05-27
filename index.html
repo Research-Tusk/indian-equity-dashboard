@@ -1540,23 +1540,81 @@
         { regime: 'low_capex', label: 'Low Capex / Deleveraging', overweight: 'FMCG · Pharma · IT · Utilities',  underweight: 'Banks · NBFCs · Capital Goods · Auto', alpha: 1.0 },
       ];
 
+      // Phase 9.2 — Map regime.overweight keyword phrases → daily_eyby_data sector index_ids.
+      // Returns array of ids that have monthly close benchmarks available on the backend.
+      const SECTOR_KEYWORD_MAP = {
+        'banks':         'nifty-bank',
+        'nbfc':          'nifty-fin-service',
+        'insurance':     'nifty-fin-service',
+        'capital goods': 'nifty-infra',
+        'auto':          'nifty-auto',
+        'metals':        'nifty-metal',
+        'realty':        'nifty-realty',
+        'fmcg':          'nifty-fmcg',
+        'pharma':        'nifty-pharma',
+        'healthcare':    'nifty-pharma',
+        'utilities':     'nifty-energy',
+        'energy':        'nifty-energy',
+        'commodities':   'nifty-commodities',
+        'large-cap it':  'nifty-it',
+        'usd-hedged it': 'nifty-it',
+        'it ':           'nifty-it',
+      };
+      function parseOverweightToIds(overweightText) {
+        if (!overweightText) return [];
+        const t = (' ' + overweightText.toLowerCase() + ' ').replace(/·/g, ' ');
+        const matched = new Set();
+        for (const [kw, id] of Object.entries(SECTOR_KEYWORD_MAP)) { if (t.includes(kw)) matched.add(id); }
+        return Array.from(matched);
+      }
+      function cagrFromSeries(points, yrs) {
+        if (!points || points.length < 2) return null;
+        const last = points[points.length - 1];
+        const targetDate = new Date(last.date); targetDate.setFullYear(targetDate.getFullYear() - yrs);
+        const targetIso = targetDate.toISOString().split('T')[0];
+        // Find the earliest entry on/after the target date (binary search since sorted).
+        let lo = 0, hi = points.length - 1, idx = -1;
+        while (lo <= hi) { const m = (lo + hi) >> 1; if (points[m].date >= targetIso) { idx = m; hi = m - 1; } else lo = m + 1; }
+        if (idx < 0 || idx >= points.length - 1) return null;
+        const start = points[idx];
+        const startVal = start.close ?? start.value;
+        const lastVal  = last.close  ?? last.value;
+        if (!startVal || !lastVal || startVal <= 0) return null;
+        const actualYrs = (new Date(last.date).getTime() - new Date(start.date).getTime()) / 31557600000;
+        if (actualYrs < 0.4) return null;
+        return { cagr: (Math.pow(lastVal / startVal, 1 / actualYrs) - 1) * 100, actualYrs, startDate: start.date, endDate: last.date };
+      }
+
       const backtest = useMemo(() => {
         if (!niftySeries || niftySeries.length === 0) return null;
         const yrs = { '1Y': 1, '3Y': 3, '5Y': 5, '10Y': 10 }[backtestPeriod] || 5;
-        const last = niftySeries[niftySeries.length - 1];
-        const targetDate = new Date(last.date); targetDate.setFullYear(targetDate.getFullYear() - yrs);
-        const targetIso = targetDate.toISOString().split('T')[0];
-        let startIdx = niftySeries.findIndex(p => p.date >= targetIso);
-        if (startIdx < 0) startIdx = 0;
-        const start = niftySeries[startIdx];
-        if (!start || !start.value || !last.value) return null;
-        const actualYrs = (new Date(last.date).getTime() - new Date(start.date).getTime()) / 31557600000;
-        if (actualYrs < 0.5) return null;
-        const niftyCagr = (Math.pow(last.value / start.value, 1 / actualYrs) - 1) * 100;
-        const alpha = STRATEGY_MATRIX.find(r => r.regime === regime.id)?.alpha ?? 2.0;
-        const strategyCagr = niftyCagr + alpha;
-        return { niftyCagr: +niftyCagr.toFixed(2), strategyCagr: +strategyCagr.toFixed(2), alpha: +alpha.toFixed(2), startDate: start.date, endDate: last.date, actualYrs: +actualYrs.toFixed(1) };
-      }, [niftySeries, backtestPeriod, regime]);
+        // Nifty 50 baseline CAGR — same engine over the same window.
+        const niftyRes = cagrFromSeries(niftySeries, yrs);
+        if (!niftyRes) return null;
+        // Phase 9.2 — Dynamic strategy basket CAGR: average N-year CAGRs of the active regime's overweight sectors.
+        const benchmarks = indiaMacro?.sectorBenchmarks || {};
+        const overweightIds = parseOverweightToIds(STRATEGY_MATRIX.find(r => r.regime === regime.id)?.overweight || '');
+        const componentCagrs = [];
+        const componentDetails = [];
+        for (const id of overweightIds) {
+          const series = benchmarks[id]; if (!series || series.length < 4) continue;
+          const r = cagrFromSeries(series, yrs); if (r == null) continue;
+          componentCagrs.push(r.cagr);
+          componentDetails.push({ id, cagr: +r.cagr.toFixed(2), actualYrs: +r.actualYrs.toFixed(1) });
+        }
+        const strategyCagr = componentCagrs.length > 0 ? componentCagrs.reduce((s, x) => s + x, 0) / componentCagrs.length : null;
+        const alpha = strategyCagr != null ? +(strategyCagr - niftyRes.cagr).toFixed(2) : null;
+        return {
+          niftyCagr: +niftyRes.cagr.toFixed(2),
+          strategyCagr: strategyCagr != null ? +strategyCagr.toFixed(2) : null,
+          alpha,
+          startDate: niftyRes.startDate,
+          endDate: niftyRes.endDate,
+          actualYrs: +niftyRes.actualYrs.toFixed(1),
+          basket: componentDetails,
+          basketIds: overweightIds,
+        };
+      }, [niftySeries, backtestPeriod, regime, indiaMacro]);
 
       if (!indiaMacro) {
         return (<div style={{ padding: '60px 24px', textAlign: 'center', color: C.textMut, fontSize: 14 }}>Loading India macro data…</div>);
@@ -1579,24 +1637,52 @@
         return 'SRC';
       };
 
+      // Phase 9.2 — Slice cell.series by the global time toggle so sparklines react in lock-step with sector charts.
+      // Period mapping: 1Y/3Y/5Y/10Y/MAX → trailing months/days from the latest observation.
+      const slicedSeries = (series) => {
+        if (!Array.isArray(series) || series.length === 0) return [];
+        const yrs = { '1Y': 1, '3Y': 3, '5Y': 5, '10Y': 10 }[period];
+        if (!yrs) return series; // MAX or custom — return full series
+        const last = series[series.length - 1];
+        if (!last || !last.date) return series;
+        const cutoff = new Date(last.date); cutoff.setFullYear(cutoff.getFullYear() - yrs);
+        const cutoffIso = cutoff.toISOString().split('T')[0];
+        return series.filter(p => p.date >= cutoffIso);
+      };
+
       const Cell = ({ cell, suffix, invertTone }) => {
         if (!cell) return null;
         const isNA = cell.status !== 'ok' || (cell.value == null && cell.yoy == null);
         const big = cell.yoy != null ? fmtPct(cell.yoy) : (cell.value != null ? fmtVal(cell.value) + (suffix || '') : 'N/A');
         const valueColor = isNA ? C.textMut : (cell.yoy != null ? tone(invertTone ? -cell.yoy : cell.yoy) : C.text);
+        // Phase 9.2 — Sparkline data (sliced by global time toggle).
+        const sparkData = !isNA ? slicedSeries(cell.series) : [];
+        const sparkColor = invertTone ? (cell.yoy != null && cell.yoy < 0 ? C.green : C.red) : (cell.yoy != null && cell.yoy >= 0 ? C.green : C.red);
+        const isFallback = cell.provenance === 'fallback';
         return (
           <div style={{ padding: 16, borderRadius: 10, background: '#fff', border: '1px solid ' + C.border, minHeight: 108 }}>
             <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
               {cell.label}
               {cell.sourceUrl && (
-                <a href={cell.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#64748b', fontSize: 10, textDecoration: 'none', marginLeft: 6, fontWeight: 500 }}>
-                  [{sourceTagFromUrl(cell.sourceUrl)}]
+                <a href={cell.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: isFallback ? '#d97706' : '#64748b', fontSize: 10, textDecoration: 'none', marginLeft: 6, fontWeight: isFallback ? 700 : 500 }} title={isFallback ? 'Primary FRED ID empty — using fallback proxy' : undefined}>
+                  [{sourceTagFromUrl(cell.sourceUrl)}{isFallback ? '·FALLBACK' : ''}]
                 </a>
               )}
             </div>
             <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: valueColor, marginTop: 4 }}>{isNA ? 'N/A' : big}</div>
             {!isNA && cell.value != null && cell.yoy != null && (
               <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Latest: <span className="mono">{fmtVal(cell.value)}{suffix || ''}</span>{cell.date ? ' · ' + cell.date : ''}</div>
+            )}
+            {sparkData.length >= 4 && (
+              <div style={{ marginTop: 6, height: 32, opacity: 0.9 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={sparkData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+                    <YAxis hide domain={['dataMin', 'dataMax']} />
+                    <XAxis hide dataKey="date" />
+                    <Line type="monotone" dataKey="value" stroke={sparkColor} strokeWidth={1.4} dot={false} isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
             )}
             {cell.source && <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, fontStyle: 'italic', lineHeight: 1.4 }}>{cell.source}</div>}
           </div>
@@ -1762,23 +1848,38 @@
               </div>
             </div>
             {backtest ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-                <div style={{ padding: 16, background: '#fff', border: '1px solid ' + C.border, borderRadius: 10 }}>
-                  <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Strategy CAGR</div>
-                  <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: tone(backtest.strategyCagr), marginTop: 4 }}>{fmtPct(backtest.strategyCagr)}</div>
-                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>{regime.label} basket · {backtest.actualYrs}Y window</div>
+              <React.Fragment>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                  <div style={{ padding: 16, background: '#fff', border: '1px solid ' + C.border, borderRadius: 10 }}>
+                    <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Strategy CAGR</div>
+                    <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: backtest.strategyCagr == null ? C.textMut : tone(backtest.strategyCagr), marginTop: 4 }}>{backtest.strategyCagr == null ? 'N/A' : fmtPct(backtest.strategyCagr)}</div>
+                    <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>{regime.label} basket · {backtest.actualYrs}Y window · {backtest.basket?.length || 0} of {backtest.basketIds?.length || 0} sectors</div>
+                  </div>
+                  <div style={{ padding: 16, background: '#fff', border: '1px solid ' + C.border, borderRadius: 10 }}>
+                    <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Nifty 50 CAGR</div>
+                    <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: tone(backtest.niftyCagr), marginTop: 4 }}>{fmtPct(backtest.niftyCagr)}</div>
+                    <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>Benchmark · live close · {backtest.startDate} → {backtest.endDate}</div>
+                  </div>
+                  <div style={{ padding: 16, background: regime.color + '12', border: '1px solid ' + regime.color + '60', borderRadius: 10 }}>
+                    <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Excess Return (α)</div>
+                    <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: backtest.alpha == null ? C.textMut : (backtest.alpha >= 0 ? regime.color : C.red), marginTop: 4 }}>{backtest.alpha == null ? 'N/A' : (backtest.alpha >= 0 ? '+' : '') + backtest.alpha.toFixed(2) + '%'}</div>
+                    <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>Computed live: Strategy − Nifty 50</div>
+                  </div>
                 </div>
-                <div style={{ padding: 16, background: '#fff', border: '1px solid ' + C.border, borderRadius: 10 }}>
-                  <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Nifty 50 CAGR</div>
-                  <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: tone(backtest.niftyCagr), marginTop: 4 }}>{fmtPct(backtest.niftyCagr)}</div>
-                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>Benchmark · live close · {backtest.startDate} → {backtest.endDate}</div>
-                </div>
-                <div style={{ padding: 16, background: regime.color + '12', border: '1px solid ' + regime.color + '60', borderRadius: 10 }}>
-                  <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Excess Return (α)</div>
-                  <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: regime.color, marginTop: 4 }}>+{backtest.alpha.toFixed(2)}%</div>
-                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>Static regime alpha estimate</div>
-                </div>
-              </div>
+                {/* Phase 9.2 — Per-sector CAGR breakdown so users can see which sleeves drove the basket return. */}
+                {Array.isArray(backtest.basket) && backtest.basket.length > 0 && (
+                  <div style={{ marginTop: 14, padding: 12, background: '#fff', border: '1px solid ' + C.border, borderRadius: 10 }}>
+                    <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, marginBottom: 8 }}>Basket Components ({backtestPeriod} CAGR)</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {backtest.basket.map(c => (
+                        <span key={c.id} className="mono" style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 6, background: c.cagr >= backtest.niftyCagr ? C.green + '18' : C.red + '18', color: c.cagr >= backtest.niftyCagr ? C.green : C.red, border: '1px solid ' + (c.cagr >= backtest.niftyCagr ? C.green : C.red) + '60' }}>
+                          {c.id.replace('nifty-','').replace('-',' ')}: {c.cagr >= 0 ? '+' : ''}{c.cagr.toFixed(1)}%
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </React.Fragment>
             ) : (
               <div style={{ padding: 20, color: C.textMut, fontSize: 13, textAlign: 'center' }}>Loading Nifty 50 close series for backtest window…</div>
             )}
