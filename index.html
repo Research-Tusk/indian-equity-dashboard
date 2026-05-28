@@ -2401,6 +2401,92 @@
             </ChartCard>
           </div>
 
+          {/* Phase 10.1 — Tusk Quality & Governance Guard
+              Forensic / capital-allocation companion panel rendered alongside the Price chart.
+              Reads stocks-quote.forensics: promoter pledge %, auditor cleanliness, Beneish M-score,
+              CFO/EBITDA, and a 5-year ROE-WACC spread sparkline. Color-coded by flag (red/amber/green).
+              All inline charts respect the global period selector via slicedSpread() below. */}
+          {(() => {
+            const q = quoteCache[selectedTicker];
+            const fo = q?.forensics;
+            if (!fo) return null;
+            const flagColors = { red: C.red, amber: C.amber, green: C.green };
+            const flagLabel  = { red: 'RED FLAG', amber: 'CAUTION', green: 'CLEAN' };
+            const fpct = (v) => v == null ? 'N/A' : (+v).toFixed(2) + '%';
+            const fnum = (v) => v == null ? 'N/A' : (+v).toFixed(2);
+            // Slice 5y ROE-WACC monthly series by global period toggle (1Y/3Y/5Y/10Y → trailing months).
+            const slicedSpread = (() => {
+              const series = fo.roeWaccSeries?.series || [];
+              const yrs = { '1Y': 1, '3Y': 3, '5Y': 5, '10Y': 10 }[period];
+              if (!yrs || series.length === 0) return series;
+              return series.slice(-Math.min(series.length, yrs));
+            })();
+            const latestSpreadPt = slicedSpread.length ? slicedSpread[slicedSpread.length - 1] : null;
+            const Cell = ({ tile }) => (
+              <div style={{ flex: '1 1 220px', padding: 14, background: '#fff', border: '1px solid ' + C.border, borderRadius: 10, minHeight: 92 }}>
+                <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, marginBottom: 6 }}>
+                  {tile.label}
+                  {tile.cell?.sourceUrl && (
+                    <a href={tile.cell.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#64748b', fontSize: 10, textDecoration: 'none', marginLeft: 6, fontWeight: 500 }}>[SRC]</a>
+                  )}
+                </div>
+                <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: flagColors[tile.cell?.flag] || C.text, marginBottom: 4 }}>{tile.display}</div>
+                {tile.cell?.flag && (
+                  <span className="mono" style={{ display: 'inline-block', padding: '2px 8px', fontSize: 9, fontWeight: 700, borderRadius: 4, background: flagColors[tile.cell.flag] + '20', color: flagColors[tile.cell.flag], letterSpacing: '0.05em' }}>{flagLabel[tile.cell.flag] || tile.cell.flag}</span>
+                )}
+                {tile.sub && <div style={{ fontSize: 10, color: C.textMut, marginTop: 6, fontStyle: 'italic', lineHeight: 1.4 }}>{tile.sub}</div>}
+              </div>
+            );
+            return (
+              <div style={{ marginBottom: 24, padding: 20, background: C.card, border: '1px solid ' + C.border, borderRadius: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: C.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tusk Quality & Governance Guard</div>
+                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 2, fontStyle: 'italic' }}>Forensic & capital-allocation overlays · proxy values flagged; primary sources linked per row</div>
+                  </div>
+                  {latestSpreadPt && (
+                    <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: latestSpreadPt.spread >= 5 ? C.green : latestSpreadPt.spread >= 2 ? C.amber : C.red, padding: '5px 12px', background: (latestSpreadPt.spread >= 5 ? C.green : latestSpreadPt.spread >= 2 ? C.amber : C.red) + '18', borderRadius: 6, border: '1px solid ' + (latestSpreadPt.spread >= 5 ? C.green : latestSpreadPt.spread >= 2 ? C.amber : C.red) + '60' }}>
+                      ROE−WACC: {latestSpreadPt.spread.toFixed(2)}%
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+                  <Cell tile={{ label: 'Promoter Pledge %', cell: fo.promoterPledge, display: fpct(fo.promoterPledge?.value), sub: 'Red flag at >25% per Tusk research priors.' }} />
+                  <Cell tile={{ label: 'Auditor Status', cell: fo.auditorStatus, display: fo.auditorStatus?.value ? String(fo.auditorStatus.value).toUpperCase() : 'N/A', sub: fo.auditorStatus?.auditor || 'Most recent FY signatory' }} />
+                  <Cell tile={{ label: 'Beneish M-Score', cell: fo.beneishMScore, display: fnum(fo.beneishMScore?.value), sub: 'Earnings manipulation proxy: <−2.22 = clean, >−1.78 = caution.' }} />
+                  <Cell tile={{ label: 'CFO / EBITDA', cell: fo.cfoEbitdaRatio, display: fnum(fo.cfoEbitdaRatio?.value), sub: 'Earnings-quality ratio: <0.6 = caution, >0.75 = strong cash conversion.' }} />
+                </div>
+                {/* 5-year ROE-WACC spread sparkline */}
+                {slicedSpread.length > 0 && (
+                  <div style={{ padding: 12, background: '#fff', border: '1px solid ' + C.border, borderRadius: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: C.text, textTransform: 'uppercase', letterSpacing: '0.05em' }}>ROE − WACC Spread (5y trailing)</div>
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 2, fontStyle: 'italic' }}>
+                          {fo.roeWaccSeries?.source || 'Derived'}
+                          {fo.roeWaccSeries?.sourceUrl && <a href={fo.roeWaccSeries.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#64748b', marginLeft: 6, textDecoration: 'none' }}>[Yahoo]</a>}
+                        </div>
+                      </div>
+                      <span className="mono" style={{ fontSize: 10, color: C.textMut }}>{slicedSpread.length} pts · {period} window</span>
+                    </div>
+                    <ResponsiveContainer width="100%" height={120}>
+                      <ComposedChart data={slicedSpread} margin={{ top: 5, right: 10, left: 5, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textMut }} stroke={C.grid} />
+                        <YAxis tick={{ fontSize: 10, fill: C.textMut }} stroke={C.grid} tickFormatter={v => v.toFixed(0) + '%'} domain={['dataMin - 1', 'dataMax + 1']} />
+                        <Tooltip formatter={(v, n) => [(+v).toFixed(2) + '%', n === 'spread' ? 'ROE−WACC' : n === 'roe' ? 'ROE' : 'WACC']} />
+                        <ReferenceLine y={0} stroke={C.textMut} strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="spread" stroke={C.cyan} strokeWidth={2} dot={{ r: 3, fill: C.cyan }} isAnimationActive={false} name="spread" />
+                        <Line type="monotone" dataKey="roe"   stroke={C.green} strokeWidth={1.2} strokeDasharray="4 3" dot={false} isAnimationActive={false} name="roe" />
+                        <Line type="monotone" dataKey="wacc"  stroke={C.red}   strokeWidth={1.2} strokeDasharray="4 3" dot={false} isAnimationActive={false} name="wacc" />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* P/E and P/B charts side-by-side */}
           <div className="charts-grid" style={{ marginBottom: 24 }}>
             <ChartCard
