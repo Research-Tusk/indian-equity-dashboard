@@ -1480,10 +1480,28 @@
       unknown:      { window: '—', strategyReturn: null, niftyReturn: null, note: 'Awaiting fresh macro prints to anchor the regime.' },
     };
 
-    function IndiaMacroHub({ indiaMacro, period, customStartISO }) {
+    function IndiaMacroHub({ indiaMacro, period, customStartISO, refetchIndiaMacro }) {
       // Phase 9 — Total rebuild. Five Box sections + Regime Engine + Strategy Matrix + Backtest Card.
       const [backtestPeriod, setBacktestPeriod] = useState('5Y');
       const [niftyFallback, setNiftyFallback] = useState(null);
+      // Phase 10.2 — Force System Sync trigger state. Runs the Edge Function's update-all endpoint, then re-fetches
+      // the india-macro payload (cache-busted) so the UI immediately reflects any newly-stored close prices.
+      const [syncState, setSyncState] = useState({ status: 'idle', summary: null, error: null, startedAt: null });
+      const forceSync = useCallback(async () => {
+        if (syncState.status === 'running') return;
+        setSyncState({ status: 'running', summary: null, error: null, startedAt: Date.now() });
+        try {
+          const r = await fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=update-all&t=' + Date.now(), { cache: 'no-store' });
+          const j = await r.json();
+          const summary = j?.summary || { ok: 0, error: 0, total: 0 };
+          if (typeof refetchIndiaMacro === 'function') refetchIndiaMacro();
+          setSyncState({ status: 'complete', summary, error: null, startedAt: null });
+          window.setTimeout(() => setSyncState(prev => prev.status === 'complete' ? { status: 'idle', summary: null, error: null, startedAt: null } : prev), 8000);
+        } catch (e) {
+          setSyncState({ status: 'error', summary: null, error: String(e), startedAt: null });
+          window.setTimeout(() => setSyncState(prev => prev.status === 'error' ? { status: 'idle', summary: null, error: null, startedAt: null } : prev), 8000);
+        }
+      }, [syncState.status, refetchIndiaMacro]);
 
       // Hooks must run unconditionally. Compute on each render even before data lands.
       const niftySeries = (indiaMacro?.niftyClose && indiaMacro.niftyClose.length > 0)
@@ -1715,10 +1733,50 @@
 
       return (
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>India Macro Hub</h2>
-          <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 16px' }}>
-            Phase 9 institutional pipeline · <span className="mono" style={{ color: C.textSec }}>{indiaMacro.deploy_version || 'v62'}</span> · Live FRED + Yahoo proxies with graceful 'N/A' fallback when a source rate-limits.
-          </p>
+          {/* Phase 10.2 — Header strip with title + Force System Sync trigger. */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 6 }}>
+            <div>
+              <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: '0 0 6px' }}>India Macro Hub</h2>
+              <p style={{ fontSize: 13, color: C.textMut, margin: '0 0 0' }}>
+                Phase 9 institutional pipeline · <span className="mono" style={{ color: C.textSec }}>{indiaMacro.deploy_version || 'v62'}</span> · Live FRED + Yahoo proxies with graceful 'N/A' fallback when a source rate-limits.
+              </p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+              <button
+                onClick={forceSync}
+                disabled={syncState.status === 'running'}
+                className="mono"
+                style={{
+                  padding: '8px 14px', fontSize: 12, fontWeight: 700, borderRadius: 8, cursor: syncState.status === 'running' ? 'wait' : 'pointer',
+                  border: '1px solid ' + (syncState.status === 'error' ? C.red : syncState.status === 'complete' ? C.green : C.cyan),
+                  background: syncState.status === 'error' ? C.red + '12' : syncState.status === 'complete' ? C.green + '12' : C.cyan + '12',
+                  color: syncState.status === 'error' ? C.red : syncState.status === 'complete' ? C.green : C.cyan,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  opacity: syncState.status === 'running' ? 0.85 : 1,
+                  transition: 'all 0.15s ease',
+                }}
+                title="Phase 10.2 — Force a fresh fault-tolerant pass over every Indian + Global index and Macro Hub block. Jittered 200-500ms between items to bypass rate limits."
+              >
+                {syncState.status === 'running' && (<span style={{ width: 12, height: 12, border: '2px solid ' + C.cyan + '50', borderTopColor: C.cyan, borderRadius: '50%', animation: 'spin 0.8s linear infinite', display: 'inline-block' }} />)}
+                {syncState.status === 'complete' && '✓ '}
+                {syncState.status === 'error' && '✗ '}
+                {syncState.status === 'running' ? 'Syncing…' : syncState.status === 'complete' ? 'Sync Complete' : syncState.status === 'error' ? 'Sync Failed' : '⟳ Force System Sync'}
+              </button>
+              {syncState.status === 'complete' && syncState.summary && (
+                <div className="mono" style={{ fontSize: 10, color: C.textMut, textAlign: 'right' }}>
+                  {syncState.summary.ok}/{syncState.summary.total} indices refreshed in {Math.round((syncState.summary.durationMs || 0)/1000)}s
+                  {syncState.summary.error > 0 && <span style={{ color: C.amber }}> · {syncState.summary.error} drifted</span>}
+                </div>
+              )}
+              {syncState.status === 'error' && syncState.error && (
+                <div className="mono" style={{ fontSize: 10, color: C.red, textAlign: 'right', maxWidth: 320, wordBreak: 'break-word' }}>{syncState.error}</div>
+              )}
+              {syncState.status === 'running' && syncState.startedAt && (
+                <div className="mono" style={{ fontSize: 10, color: C.textMut, textAlign: 'right' }}>Running fault-tolerant pass · jitter 200–500ms between feeds…</div>
+              )}
+            </div>
+          </div>
+          <div style={{ height: 16 }} />
 
           {/* Regime Banner — auto-detected from IIP, CPI, 10Y−3M Spread */}
           <div style={{ background: regime.color + '15', border: '1px solid ' + regime.color + '60', borderRadius: 12, padding: '16px 20px', marginBottom: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 20 }}>
@@ -3246,7 +3304,7 @@
           {/* Phase-5: GDP Factor Matrix card REMOVED from sector tabs — moved into the dedicated INDIA MACRO tab. */}
 
           {/* Phase-5: India Macro Hub takes over when in india-macro country. Phase-4 Global Macro Hub same. */}
-          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} indiaExtras={indiaExtras} sectorWeights={sectorWeights} longOnly={longOnly} period={period} customStartISO={customStartISO} regimeOverride={regimeOverride} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} globalExtras={globalExtras} period={period} customStartISO={customStartISO} /> : (<React.Fragment>
+          {inIndiaMacroHub ? <IndiaMacroHub indiaMacro={indiaMacro} indiaExtras={indiaExtras} sectorWeights={sectorWeights} longOnly={longOnly} period={period} customStartISO={customStartISO} regimeOverride={regimeOverride} refetchIndiaMacro={() => fetch('https://urmzsefnlyfnalxckefm.supabase.co/functions/v1/nse-data-proxy?mode=india-macro&t=' + Date.now(), { cache: 'no-store' }).then(r => r.json()).then(setIndiaMacro).catch(() => {})} /> : inGlobalMacroHub ? <GlobalMacroHub macroHistory={macroHistory} globalExtras={globalExtras} period={period} customStartISO={customStartISO} /> : (<React.Fragment>
           {/* KPI Cards — Phase-5: added EpsGrowthCard with 1Y/2Y/3Y/4Y/5Y/7Y/10Y toggle */}
           <div className="kpi-grid" style={{ marginBottom: 32 }}>
             <StatCard label={indexConfig.shortLabel + " P/E"} value={current.pe} suffix="x" color={C.cyan} subtext={'Mean: ' + (filteredStats?.pe || EMPTY_STATS).mean + 'x'} />
