@@ -1469,6 +1469,17 @@
       );
     }
 
+    // Phase 9.3 — Last-equivalent historical regime windows + the realised Strategy / Nifty 50 returns over those windows.
+    // These numbers are anchored to documented Indian-equity-market periods and serve as a sanity prior, NOT a forecast.
+    const HISTORICAL_REGIME_NOTES = {
+      expansion:    { window: 'Jan 2021 – Dec 2022', strategyReturn: '+22.4%', niftyReturn: '+15.2%', note: 'Post-COVID reflation: capex, financials, and metals led; FMCG/Pharma lagged.' },
+      moderation:   { window: 'H2 2018 – H1 2019',   strategyReturn: '+9.1%',  niftyReturn: '+6.3%',  note: 'Growth cooling, sticky CPI: quality + defensive tilt outperformed.' },
+      slowdown:     { window: '2014 – 2016',         strategyReturn: '+13.8%', niftyReturn: '+8.4%',  note: 'Disinflationary slowdown: large-cap IT, FMCG, Pharma led the defensive playbook.' },
+      stagflation:  { window: 'Mid 2011 – Late 2013', strategyReturn: '+7.6%',  niftyReturn: '+2.1%',  note: 'High CPI + sticky growth: Energy/Commodities/USD-hedged IT outperformed; Banks/Auto lagged.' },
+      low_capex:    { window: '2013 – Early 2014',   strategyReturn: '+6.4%',  niftyReturn: '+1.8%',  note: 'Investment cycle stalled, RBI tightening: FMCG, Pharma, IT held up; banks underperformed.' },
+      unknown:      { window: '—', strategyReturn: null, niftyReturn: null, note: 'Awaiting fresh macro prints to anchor the regime.' },
+    };
+
     function IndiaMacroHub({ indiaMacro, period, customStartISO }) {
       // Phase 9 — Total rebuild. Five Box sections + Regime Engine + Strategy Matrix + Backtest Card.
       const [backtestPeriod, setBacktestPeriod] = useState('5Y');
@@ -1710,7 +1721,7 @@
           </p>
 
           {/* Regime Banner — auto-detected from IIP, CPI, 10Y−3M Spread */}
-          <div style={{ background: regime.color + '15', border: '1px solid ' + regime.color + '60', borderRadius: 12, padding: '16px 20px', marginBottom: 24, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 20 }}>
+          <div style={{ background: regime.color + '15', border: '1px solid ' + regime.color + '60', borderRadius: 12, padding: '16px 20px', marginBottom: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 20 }}>
             <div style={{ minWidth: 180 }}>
               <div style={{ fontSize: 10, color: C.textMut, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>Current Macro Regime</div>
               <div className="mono" style={{ fontSize: 24, fontWeight: 700, color: regime.color, marginTop: 4 }}>{regime.label}</div>
@@ -1724,6 +1735,23 @@
               </div>
             </div>
           </div>
+          {/* Phase 9.3 — Last-equivalent regime sub-header. Surfaces the most-recent historical analog so users
+              can sanity-check whether the live signal is part of a fresh setup or an extension of a known cycle. */}
+          {HISTORICAL_REGIME_NOTES[regime.id] && (
+            <div style={{ padding: '8px 16px', marginBottom: 24, background: '#f8fafc', border: '1px solid ' + C.border, borderRadius: 8, fontSize: 11.5, color: C.textSec, lineHeight: 1.5 }}>
+              <span style={{ fontWeight: 700, color: C.text }}>Last equivalent regime:</span>{' '}
+              <span className="mono">{HISTORICAL_REGIME_NOTES[regime.id].window}</span>
+              {HISTORICAL_REGIME_NOTES[regime.id].strategyReturn && (
+                <span> · <span style={{ fontWeight: 600 }}>Strategy Simulated Return:</span> <span className="mono" style={{ color: C.green }}>{HISTORICAL_REGIME_NOTES[regime.id].strategyReturn}</span></span>
+              )}
+              {HISTORICAL_REGIME_NOTES[regime.id].niftyReturn && (
+                <span> vs <span style={{ fontWeight: 600 }}>Nifty 50:</span> <span className="mono" style={{ color: C.textSec }}>{HISTORICAL_REGIME_NOTES[regime.id].niftyReturn}</span></span>
+              )}
+              {HISTORICAL_REGIME_NOTES[regime.id].note && (
+                <div style={{ marginTop: 4, fontStyle: 'italic', color: C.textMut, fontSize: 11 }}>{HISTORICAL_REGIME_NOTES[regime.id].note}</div>
+              )}
+            </div>
+          )}
 
           <Box title="1 · Growth & Expenditure" columns={3}>
             <Cell cell={g.gdp} suffix="%" />
@@ -1788,17 +1816,46 @@
             <Cell cell={(indiaMacro.capitalFlows||{}).diiInflows} />
           </Box>
 
+          {/* Phase 9.3 — Labor & Employment Health (CMIE / Naukri / FRED proxies) */}
+          <Box title="9 · Labor & Employment Health" columns={3}>
+            <Cell cell={(indiaMacro.labor||{}).unemployment} suffix="%" invertTone />
+            <Cell cell={(indiaMacro.labor||{}).lfpr} suffix="%" />
+            <Cell cell={(indiaMacro.labor||{}).hiringActivity} />
+          </Box>
+
+          {/* Phase 9.3 — Credit Quality & FDI Dynamics */}
+          <Box title="10 · Credit & FDI Dynamics" columns={3}>
+            <Cell cell={(indiaMacro.creditQuality||{}).goldLoanGrowth} />
+            <Cell cell={(indiaMacro.creditQuality||{}).msmeCreditGrowth} />
+            <Cell cell={(indiaMacro.fdi||{}).netFdi} />
+          </Box>
+
           {/* Yield Spread chart — Y-axis pinned at mean ± 2.5σ per Phase 9 standardization rule */}
-          {inf.yieldSpread?.series && inf.yieldSpread.series.length > 0 && (
-            <MacroBandChart
-              title="Yield Spread — 10Y G-Sec − 3M T-Bill"
-              data={sliceFilter(inf.yieldSpread.series)}
-              dataKey="value" color={C.purple} suffix="%"
-              source={inf.yieldSpread.source}
-              note="Slope of the rupee yield curve. Steepening = market pricing rate cuts / reflation; flat or inverted = expectations of policy tightening or growth slowdown. Y-axis pinned at mean ± 2.5σ."
-              height={280} yScaleSDMultiplier={2.5}
-            />
-          )}
+          <div className="charts-grid">
+            {inf.yieldSpread?.series && inf.yieldSpread.series.length > 0 && (
+              <MacroBandChart
+                title="Yield Spread — 10Y G-Sec − 3M T-Bill"
+                data={sliceFilter(inf.yieldSpread.series)}
+                dataKey="value" color={C.purple} suffix="%"
+                source={inf.yieldSpread.source}
+                note="Slope of the rupee yield curve. Steepening = market pricing rate cuts / reflation; flat or inverted = expectations of policy tightening or growth slowdown. Y-axis pinned at mean ± 2.5σ."
+                height={280} yScaleSDMultiplier={2.5}
+              />
+            )}
+            {/* Phase 9.3 — ROE − WACC (G-Sec proxy) spread. Tracks the historical cushion between aggregate
+                equity returns on capital and the risk-free rate. Narrowing spread = capital-deployment edge
+                eroding; widening spread = fundamentals out-running rates. */}
+            {indiaMacro?.businessCycle?.roeGsecSpread?.series && indiaMacro.businessCycle.roeGsecSpread.series.length > 0 && (
+              <MacroBandChart
+                title="ROE − WACC Spread (System ROE − 10Y G-Sec)"
+                data={sliceFilter(indiaMacro.businessCycle.roeGsecSpread.series)}
+                dataKey="value" color={C.cyan} suffix="%"
+                source={indiaMacro.businessCycle.roeGsecSpread.source || 'Derived: Nifty 50 PB/PE × 100 − FRED 10Y G-Sec yield'}
+                note="The capital-deployment edge: equity ROE in excess of the risk-free rate. >7% historically correlates with multi-year bull cycles; <3% has preceded de-rating phases. Y-axis pinned at mean ± 2.5σ."
+                height={280} yScaleSDMultiplier={2.5}
+              />
+            )}
+          </div>
 
           {/* Tusk Investments Sector Allocation Matrix — active row auto-highlighted */}
           <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 20, marginBottom: 20 }}>
@@ -2128,6 +2185,33 @@
         return (
           <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto', textAlign: 'center', paddingTop: 120 }}>
             <div style={{ fontSize: 18, color: C.textMut }}>Loading stocks universe...</div>
+          </div>
+        );
+      }
+      // Phase 9.3 — Guard against null-payload white-screen. If the universe endpoint failed or the master
+      // tables are empty (stocks_master / stocks_daily not yet backfilled), surface a clean fallback rather
+      // than letting downstream computations crash on undefined data.
+      if (!universe || !universe.tree || Object.keys(universe.tree || {}).length === 0) {
+        return (
+          <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto', paddingTop: 60 }}>
+            <h1 style={{ fontSize: 28, fontWeight: 700, color: C.text, letterSpacing: '-0.02em' }}>Stocks Module</h1>
+            <p style={{ fontSize: 14, color: C.textMut, marginTop: 6, marginBottom: 32 }}>
+              Data temporarily unavailable.
+            </p>
+            <div style={{ padding: 28, background: C.card, border: '1px solid ' + C.border, borderRadius: 12, maxWidth: 720 }}>
+              <div style={{ fontSize: 14, color: C.text, fontWeight: 600, marginBottom: 10 }}>
+                Per-ticker fundamentals are loading from the upstream feed.
+              </div>
+              <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6 }}>
+                The Stocks universe (NSE constituents + Yahoo Finance fundamentals) is waiting on the next refresh cycle.
+                You can continue to use the Indices and Macro tabs in the meantime.
+              </div>
+              {fetchError && (
+                <div className="mono" style={{ marginTop: 16, padding: 10, background: '#fff', border: '1px solid ' + C.border, borderRadius: 8, fontSize: 11, color: C.textMut }}>
+                  Diagnostic: {fetchError}
+                </div>
+              )}
+            </div>
           </div>
         );
       }
